@@ -3,20 +3,20 @@ import { db } from "@/db";
 import { schedules } from "@/db/schema";
 import { refreshAll } from "@/lib/hub";
 import { error, json } from "@/lib/http";
-import { checkSchedule, findConflict, isUuid, type ScheduleBody } from "@/lib/schedules";
+import { checkSchedule, findConflict, isUuid, loadSchedules, saveSchedule, type ScheduleBody } from "@/lib/schedules";
 
 type Ctx = { params: Promise<{ id: string }> };
 
 export async function PATCH(req: Request, { params }: Ctx) {
   const { id } = await params;
   if (!isUuid(id)) return error("Bloque no encontrado", 404);
-  const [current] = await db.select().from(schedules).where(eq(schedules.id, id));
+  const [current] = await loadSchedules(eq(schedules.id, id));
   if (!current) return error("Bloque no encontrado", 404);
   const checked = await checkSchedule((await req.json()) as ScheduleBody, current);
   if ("error" in checked) return error(checked.error);
   const conflict = await findConflict(checked.values, { id, validFrom: current.validFrom, validUntil: current.validUntil });
   if (conflict) return error(conflict, 409);
-  await db.update(schedules).set(checked.values).where(eq(schedules.id, id));
+  await saveSchedule(checked.values, id);
   await refreshAll();
   return json({ ok: true });
 }

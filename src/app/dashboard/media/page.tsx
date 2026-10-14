@@ -1,21 +1,28 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import { api, formatBytes, type DeviceDTO, type FolderDTO, type MediaDTO } from "@/lib/client";
-import { IconFolder, IconMedia, IconPlus, IconSearch } from "@/components/Icons";
+import { IconClose, IconFolder, IconMedia, IconPlus, IconSearch } from "@/components/Icons";
 
 type Upload = { name: string; progress: number; error?: string };
 type Flash = { error: boolean; text: string };
 /** Menú de acciones de una fila. key = "a:<assetId>" o "f:<folderId>". */
 type Menu = { key: string; view: "main" | "move"; top: number; right: number };
+/** Datos que se miden en el navegador antes de subir el archivo. */
+type Probe = { duration: number | null; width: number | null; height: number | null; thumb: Blob | null };
 
-function uploadFile(file: File, onProgress: (p: number) => void, durationSeconds?: number) {
+function uploadFile(file: File, onProgress: (p: number) => void, probe: Probe) {
   return new Promise<MediaDTO>((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     xhr.open("PUT", "/api/media/upload");
     xhr.setRequestHeader("content-type", file.type || "application/octet-stream");
     xhr.setRequestHeader("x-file-name", encodeURIComponent(file.name));
-    if (durationSeconds) xhr.setRequestHeader("x-duration-seconds", String(durationSeconds));
+    if (probe.duration) xhr.setRequestHeader("x-duration-seconds", String(probe.duration));
+    if (probe.width && probe.height) {
+      xhr.setRequestHeader("x-width", String(probe.width));
+      xhr.setRequestHeader("x-height", String(probe.height));
+    }
     xhr.upload.onprogress = (e) => e.lengthComputable && onProgress(e.loaded / e.total);
     xhr.onload = () => {
       let data: Partial<MediaDTO> & { error?: string } = {};
@@ -46,34 +53,43 @@ function canvasToJpeg(canvas: HTMLCanvasElement) {
   return new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/jpeg", THUMB_QUALITY));
 }
 
-/** Miniatura JPEG de una imagen. Devuelve null si el navegador no puede decodificarla. */
-async function makeImageThumb(file: File): Promise<Blob | null> {
+/**
+ * Píxeles y miniatura de una imagen. Si el navegador no puede decodificarla,
+ * devuelve nulls: la subida sigue igual.
+ */
+async function readImage(file: File): Promise<Probe> {
+  let width: number | null = null;
+  let height: number | null = null;
   try {
     const bitmap = await createImageBitmap(file);
-    const { w, h } = thumbSize(bitmap.width, bitmap.height);
+    width = bitmap.width;
+    height = bitmap.height;
+    const { w, h } = thumbSize(width, height);
     const canvas = document.createElement("canvas");
     canvas.width = w;
     canvas.height = h;
     const ctx = canvas.getContext("2d");
-    if (!ctx) return null;
+    if (!ctx) return { duration: null, width, height, thumb: null };
     ctx.drawImage(bitmap, 0, 0, w, h);
     bitmap.close();
-    return await canvasToJpeg(canvas);
+    return { duration: null, width, height, thumb: await canvasToJpeg(canvas) };
   } catch {
-    return null;
+    return { duration: null, width, height, thumb: null };
   }
 }
 
 /**
- * Duración (segundos enteros) y miniatura de un video: el frame de ~1 s,
+ * Duración (segundos enteros), píxeles y miniatura de un video: el frame de ~1 s,
  * o del 10% si el video dura menos de 10 s. Si el navegador no puede
  * decodificarlo, devuelve lo que se haya podido obtener (o nulls).
  */
-function readVideo(file: File): Promise<{ duration: number | null; thumb: Blob | null }> {
+function readVideo(file: File): Promise<Probe> {
   return new Promise((resolve) => {
     const url = URL.createObjectURL(file);
     const video = document.createElement("video");
     let duration: number | null = null;
+    let width: number | null = null;
+    let height: number | null = null;
     let settled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
 
@@ -84,7 +100,7 @@ function readVideo(file: File): Promise<{ duration: number | null; thumb: Blob |
       video.removeAttribute("src");
       video.load();
       URL.revokeObjectURL(url);
-      resolve({ duration, thumb });
+      resolve({ duration, width, height, thumb });
     };
 
     timer = setTimeout(() => finish(null), 15000);
@@ -93,6 +109,8 @@ function readVideo(file: File): Promise<{ duration: number | null; thumb: Blob |
     video.preload = "auto";
     video.onerror = () => finish(null);
     video.onloadedmetadata = () => {
+      width = video.videoWidth || null;
+      height = video.videoHeight || null;
       const d = video.duration;
       if (!Number.isFinite(d) || d <= 0) return finish(null);
       duration = Math.round(d) > 0 ? Math.round(d) : null;
@@ -126,12 +144,15 @@ async function uploadThumb(assetId: string, thumb: Blob) {
 }
 
 const typeLabel = (m: MediaDTO) => m.mimeType.split("/")[1] ?? m.kind;
+const kindLabel = (m: MediaDTO) => (m.kind === "video" ? "Video" : "Imagen");
 /** mm:ss para la duración de un video. */
 const fmtDuration = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 const fmtDate = (iso: string) => new Date(iso).toLocaleString("es-AR", { dateStyle: "medium", timeStyle: "short" });
+const fmtResolution = (m: MediaDTO) => (m.width && m.height ? `${m.width}×${m.height}` : "—");
 const menuItem = "flex w-full items-center px-3 py-2 text-left hover:bg-raised disabled:opacity-40 disabled:hover:bg-transparent";
 
 export default function MediaPage() {
+  const router = useRouter();
   const [media, setMedia] = useState<MediaDTO[]>([]);
   const [folders, setFolders] = useState<FolderDTO[]>([]);
   const [devices, setDevices] = useState<DeviceDTO[]>([]);
@@ -142,6 +163,7 @@ export default function MediaPage() {
   const [folderId, setFolderId] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [menu, setMenu] = useState<Menu | null>(null);
+  const [inspectId, setInspectId] = useState<string | null>(null);
   const [flash, setFlash] = useState<Flash | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const dragDepth = useRef(0);
@@ -177,11 +199,10 @@ export default function MediaPage() {
     for (const [i, f] of list.entries()) {
       const setItem = (patch: Partial<Upload>) => setUploads((u) => u.map((x, j) => (j === i ? { ...x, ...patch } : x)));
       try {
-        // Si la generación falla, se sube igual sin miniatura ni duración.
-        const isVideo = f.type.startsWith("video/");
-        const prep = isVideo ? await readVideo(f) : { duration: null, thumb: await makeImageThumb(f) };
-        const asset = await uploadFile(f, (p) => setItem({ progress: p }), prep.duration ?? undefined);
-        if (prep.thumb) await uploadThumb(asset.id, prep.thumb).catch(() => {});
+        // Si la medición falla, se sube igual sin miniatura, duración ni píxeles.
+        const probe = f.type.startsWith("video/") ? await readVideo(f) : await readImage(f);
+        const asset = await uploadFile(f, (p) => setItem({ progress: p }), probe);
+        if (probe.thumb) await uploadThumb(asset.id, probe.thumb).catch(() => {});
         if (dest) await api(`/api/media/${asset.id}`, { method: "PATCH", body: JSON.stringify({ folderId: dest }) });
         setItem({ progress: 1 });
       } catch (err) {
@@ -254,11 +275,33 @@ export default function MediaPage() {
   }
 
   function removeAsset(m: MediaDTO) {
-    if (!confirm(`¿Borrar "${m.originalName}"?`)) return;
+    if (!confirm(`¿Eliminar "${m.originalName}"?`)) return;
     void run(async () => {
       await api(`/api/media/${m.id}`, { method: "DELETE" });
       await load();
-      return `"${m.originalName}" borrado`;
+      return `"${m.originalName}" eliminado`;
+    });
+  }
+
+  /** Crea una presentación con este medio como única diapositiva y abre la lista de presentaciones. */
+  function addToNewPresentation(m: MediaDTO) {
+    void run(async () => {
+      const orientation = (m.height ?? 0) > (m.width ?? 0) ? "portrait" : "landscape";
+      const created = await api<{ id: string }>("/api/presentations", {
+        method: "POST",
+        body: JSON.stringify({ name: m.originalName, orientation }),
+      });
+      await api(`/api/presentations/${created.id}`, {
+        method: "PUT",
+        body: JSON.stringify({
+          name: m.originalName,
+          description: null,
+          orientation,
+          transition: "cut",
+          items: [{ type: "media", mediaAssetId: m.id, durationSeconds: null, fit: "contain" }],
+        }),
+      });
+      router.push("/dashboard/presentations");
     });
   }
 
@@ -292,6 +335,7 @@ export default function MediaPage() {
   );
   const menuAsset = menu?.key.startsWith("a:") ? media.find((m) => m.id === menu.key.slice(2)) : undefined;
   const menuFolder = menu?.key.startsWith("f:") ? folders.find((f) => f.id === menu.key.slice(2)) : undefined;
+  const inspected = inspectId ? media.find((m) => m.id === inspectId) ?? null : null;
 
   return (
     <div className="flex flex-col gap-6 md:flex-row">
@@ -498,20 +542,26 @@ export default function MediaPage() {
         <>
           <div className="fixed inset-0 z-40" onClick={() => setMenu(null)} />
           <div
-            className="fixed z-50 w-56 overflow-hidden rounded-xl border border-line bg-panel py-1 text-sm shadow-2xl"
+            className="fixed z-50 w-60 overflow-hidden rounded-xl border border-line bg-panel py-1 text-sm shadow-2xl"
             style={{ top: menu.top, right: menu.right }}
           >
             {menuAsset && menu.view === "main" && (
               <>
+                <button className={menuItem} onClick={() => (setMenu(null), setInspectId(menuAsset.id))}>
+                  Inspeccionar
+                </button>
                 <button className={menuItem} onClick={() => (setMenu(null), takeover(menuAsset))}>
                   Poner al aire
+                </button>
+                <button className={menuItem} onClick={() => (setMenu(null), addToNewPresentation(menuAsset))}>
+                  Agregar a nueva presentación
                 </button>
                 <button className={menuItem} onClick={() => setMenu({ ...menu, view: "move" })}>
                   Mover a carpeta…
                 </button>
                 <div className="my-1 border-t border-line" />
                 <button className={`${menuItem} text-red-400`} onClick={() => (setMenu(null), removeAsset(menuAsset))}>
-                  Borrar
+                  Eliminar
                 </button>
               </>
             )}
@@ -556,6 +606,62 @@ export default function MediaPage() {
           </div>
         </>
       )}
+
+      {inspected && <InspectDrawer key={inspected.id} media={inspected} onClose={() => setInspectId(null)} />}
     </div>
+  );
+}
+
+/** Panel lateral con la vista previa y los datos técnicos de un medio. */
+function InspectDrawer({ media: m, onClose }: { media: MediaDTO; onClose: () => void }) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  const rows: [string, string][] = [
+    ["Tipo", kindLabel(m)],
+    ["Duración", m.kind === "video" && m.durationSeconds != null ? fmtDuration(m.durationSeconds) : "—"],
+    ["Formato", m.mimeType],
+    ["Tamaño", formatBytes(m.sizeBytes)],
+    ["Resolución", fmtResolution(m)],
+  ];
+
+  return (
+    <aside className="drawer space-y-6" role="dialog" aria-label={`Detalles de ${m.originalName}`}>
+      <div className="flex items-center gap-3">
+        <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-raised">
+          <IconMedia className="h-5 w-5 text-accent" />
+        </span>
+        <h2 className="flex-1 text-lg font-semibold">Detalles</h2>
+        <button onClick={onClose} aria-label="Cerrar" className="rounded-lg p-1 text-zinc-400 hover:bg-raised hover:text-zinc-100">
+          <IconClose />
+        </button>
+      </div>
+
+      <div className="aspect-video overflow-hidden rounded-xl bg-black">
+        {m.kind === "video" ? (
+          <video src={m.url} controls playsInline preload="metadata" className="h-full w-full object-contain" />
+        ) : (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={m.url} alt={m.originalName} className="h-full w-full object-contain" />
+        )}
+      </div>
+
+      <div className="space-y-1">
+        <span className="text-xs font-semibold uppercase tracking-wide text-zinc-500">Nombre</span>
+        <p className="break-all font-medium">{m.originalName}</p>
+      </div>
+
+      <dl className="divide-y divide-line text-sm">
+        {rows.map(([label, value]) => (
+          <div key={label} className="flex items-start justify-between gap-4 py-2.5">
+            <dt className="text-zinc-400">{label}</dt>
+            <dd className="break-all text-right tabular-nums text-zinc-200">{value}</dd>
+          </div>
+        ))}
+      </dl>
+    </aside>
   );
 }

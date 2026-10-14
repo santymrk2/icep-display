@@ -23,3 +23,11 @@ Escala esperada: 2 o 3 pantallas, modelos de TV desconocidos (por eso el reprodu
 - Las miniaturas se generan al subir: los archivos subidos antes no tienen (hay que volver a subirlos).
 - Los bloques del calendario se repiten cada semana; no hay excepciones por fecha ni reglas tipo "cada 2 semanas" todavía (la columna `rrule` está reservada).
 - Antes de producción conviene un chequeo de la tabla `schedules` si se editan bloques a la vez desde dos navegadores (la detección de solapamientos no es transaccional).
+
+## Paridad con la nueva interfaz (PR "parity-for-new-ui")
+
+Hecho: orientación horizontal/vertical por presentación; la pantalla reporta su resolución y el panel avisa si la orientación no coincide; giro de pantalla (0/90/180/270); transición corte/disolver (por presentación y por elemento); secciones; panel de detalle por elemento (escala, giro, espejo, duración); ajustes (zona horaria, fondo predeterminado, enlaces de vista previa); etiquetas; filtros de pantallas; inspector de medios.
+
+Pendiente: calendarios múltiples (cada pantalla suscripta a un calendario), enlaces públicos de vista previa (el interruptor existe, todavía no genera enlaces), carpetas de presentaciones, proveedores de contenido.
+
+Un bloque del calendario puede apuntar a varias pantallas elegidas a la vez (tabla `schedule_devices`), a un grupo o a todas; el calendario se puede filtrar por pantalla.

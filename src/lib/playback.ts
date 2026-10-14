@@ -1,38 +1,44 @@
 import { and, asc, desc, eq, gt, isNull, or } from "drizzle-orm";
 import { db } from "@/db";
 import { devices, mediaAssets, presentationItems, presentations, schedules, takeovers } from "@/db/schema";
+import { loadSchedules } from "./schedules";
 import { publicUrl } from "./storage";
-import type { PlayItem, ServerMessage } from "./protocol";
+import { backgroundUrl, getSettings, zonedParts } from "./settings";
+import type { PlayItem, PlaySource, ServerMessage } from "./protocol";
 
 const DEFAULT_IMAGE_SECONDS = 10;
 
-async function presentationPlayItems(presentationId: string): Promise<PlayItem[]> {
+type Style = { orientation: "landscape" | "portrait"; transition: "cut" | "dissolve" };
+const DEFAULT_STYLE: Style = { orientation: "landscape", transition: "cut" };
+
+async function presentationPlayItems(presentationId: string): Promise<{ items: PlayItem[]; style: Style }> {
+  const [p] = await db
+    .select({ orientation: presentations.orientation, transition: presentations.transition })
+    .from(presentations)
+    .where(eq(presentations.id, presentationId));
   const rows = await db
     .select({ item: presentationItems, asset: mediaAssets })
     .from(presentationItems)
     .innerJoin(mediaAssets, eq(presentationItems.mediaAssetId, mediaAssets.id))
     .where(eq(presentationItems.presentationId, presentationId))
     .orderBy(asc(presentationItems.position));
-  return rows.map(({ item, asset }) => ({
+  const items = rows.map(({ item, asset }) => ({
     id: item.id,
     url: publicUrl(asset.objectKey),
     kind: asset.kind,
     durationSeconds: item.durationSeconds ?? (asset.kind === "image" ? DEFAULT_IMAGE_SECONDS : null),
+    fit: item.fit === "cover" ? ("cover" as const) : ("contain" as const),
+    transition: item.transition,
+    rotation: item.rotation,
+    flipH: item.flipH,
+    flipV: item.flipV,
   }));
+  return { items, style: p ?? DEFAULT_STYLE };
 }
 
 async function presentationName(id: string) {
   const [p] = await db.select({ name: presentations.name }).from(presentations).where(eq(presentations.id, id));
   return p?.name ?? null;
-}
-
-function hhmm(d: Date) {
-  return d.toTimeString().slice(0, 8);
-}
-
-function isoDate(d: Date) {
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
 /**
@@ -41,8 +47,26 @@ function isoDate(d: Date) {
  * La hora local del servidor (variable TZ) define las franjas.
  */
 export async function resolvePlayback(deviceId: string, now = new Date()): Promise<Extract<ServerMessage, { type: "play" }>> {
+  const [device] = await db.select({ rotation: devices.rotation }).from(devices).where(eq(devices.id, deviceId));
+  const cfg = await getSettings();
+  const base = await resolveContent(deviceId, now, cfg.timezone);
+  return {
+    type: "play",
+    source: base.source,
+    label: base.label,
+    items: base.items,
+    orientation: base.style.orientation,
+    transition: base.style.transition,
+    rotation: device?.rotation ?? 0,
+    background: await backgroundUrl(cfg),
+  };
+}
+
+type Content = { source: PlaySource; label: string | null; items: PlayItem[]; style: Style };
+
+async function resolveContent(deviceId: string, now: Date, timeZone: string): Promise<Content> {
   const [device] = await db.select().from(devices).where(eq(devices.id, deviceId));
-  if (!device) return { type: "play", source: "none", label: null, items: [] };
+  if (!device) return { source: "none", label: null, items: [], style: DEFAULT_STYLE };
 
   const [takeover] = await db
     .select()
@@ -60,44 +84,37 @@ export async function resolvePlayback(deviceId: string, now = new Date()): Promi
   if (takeover?.mediaAssetId) {
     const [asset] = await db.select().from(mediaAssets).where(eq(mediaAssets.id, takeover.mediaAssetId));
     if (asset) {
+      const portrait = asset.width && asset.height && asset.height > asset.width;
       return {
-        type: "play",
         source: "takeover",
         label: asset.originalName,
-        items: [{ id: asset.id, url: publicUrl(asset.objectKey), kind: asset.kind, durationSeconds: null }],
+        items: [{ id: asset.id, url: publicUrl(asset.objectKey), kind: asset.kind, durationSeconds: null, fit: "contain", transition: null, rotation: 0, flipH: false, flipV: false }],
+        style: { orientation: portrait ? "portrait" : "landscape", transition: "cut" },
       };
     }
   }
   if (takeover?.presentationId) {
-    return {
-      type: "play",
-      source: "takeover",
-      label: await presentationName(takeover.presentationId),
-      items: await presentationPlayItems(takeover.presentationId),
-    };
+    const r = await presentationPlayItems(takeover.presentationId);
+    return { source: "takeover", label: await presentationName(takeover.presentationId), items: r.items, style: r.style };
   }
 
-  const candidates = await db
-    .select()
-    .from(schedules)
-    .where(
-      and(
-        eq(schedules.enabled, true),
-        or(
-          eq(schedules.deviceId, deviceId),
-          device.groupId ? eq(schedules.groupId, device.groupId) : undefined,
-          and(isNull(schedules.deviceId), isNull(schedules.groupId)),
-        ),
-      ),
+  const all = await loadSchedules(eq(schedules.enabled, true));
+  const candidates = all
+    .filter(
+      (s) =>
+        s.deviceIds.includes(deviceId) ||
+        (s.groupId !== null && s.groupId === device.groupId) ||
+        (s.groupId === null && s.deviceIds.length === 0),
     )
-    .orderBy(desc(schedules.priority));
+    .sort((x, y) => y.priority - x.priority);
   // Especificidad primero (pantalla > grupo > todas); dentro de cada nivel manda la prioridad (sort es estable).
-  const specificity = (s: (typeof candidates)[number]) => (s.deviceId ? 0 : s.groupId ? 1 : 2);
+  const specificity = (s: (typeof candidates)[number]) => (s.deviceIds.length ? 0 : s.groupId ? 1 : 2);
   candidates.sort((a, b) => specificity(a) - specificity(b));
 
-  const time = hhmm(now);
-  const today = isoDate(now);
-  const dayBit = 1 << now.getDay();
+  const zoned = zonedParts(now, timeZone);
+  const time = zoned.time;
+  const today = zoned.date;
+  const dayBit = 1 << zoned.day;
   const active = candidates.find(
     (s) =>
       (s.daysOfWeek & dayBit) !== 0 &&
@@ -107,21 +124,13 @@ export async function resolvePlayback(deviceId: string, now = new Date()): Promi
       (!s.validUntil || today <= s.validUntil),
   );
   if (active) {
-    return {
-      type: "play",
-      source: "schedule",
-      label: active.name,
-      items: await presentationPlayItems(active.presentationId),
-    };
+    const r = await presentationPlayItems(active.presentationId);
+    return { source: "schedule", label: active.name, items: r.items, style: r.style };
   }
 
   if (device.defaultPresentationId) {
-    return {
-      type: "play",
-      source: "default",
-      label: await presentationName(device.defaultPresentationId),
-      items: await presentationPlayItems(device.defaultPresentationId),
-    };
+    const r = await presentationPlayItems(device.defaultPresentationId);
+    return { source: "default", label: await presentationName(device.defaultPresentationId), items: r.items, style: r.style };
   }
-  return { type: "play", source: "none", label: null, items: [] };
+  return { source: "none", label: null, items: [], style: DEFAULT_STYLE };
 }

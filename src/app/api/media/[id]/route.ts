@@ -10,7 +10,7 @@ type Ctx = { params: Promise<{ id: string }> };
 /** Renombra (name) y/o mueve (folderId; null = raíz) un archivo. */
 export async function PATCH(req: Request, { params }: Ctx) {
   const { id } = await params;
-  const body = (await req.json().catch(() => ({}))) as { name?: string; folderId?: string | null };
+  const body = (await req.json().catch(() => ({}))) as { name?: string; folderId?: string | null; width?: number; height?: number };
   const patch: Partial<typeof mediaAssets.$inferInsert> = {};
 
   if (body.name !== undefined) {
@@ -27,6 +27,12 @@ export async function PATCH(req: Request, { params }: Ctx) {
       if (!folder) return error("Carpeta no encontrada");
     }
     patch.folderId = body.folderId;
+  }
+  for (const k of ["width", "height"] as const) {
+    const v = (body as Record<string, unknown>)[k];
+    if (v === undefined) continue;
+    if (typeof v !== "number" || !Number.isInteger(v) || v <= 0 || v > 100000) return error("Resolución inválida");
+    patch[k] = v;
   }
   if (Object.keys(patch).length === 0) return error("Nada para actualizar");
 

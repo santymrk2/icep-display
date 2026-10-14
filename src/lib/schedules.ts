@@ -1,12 +1,14 @@
-import { and, eq, isNull, ne } from "drizzle-orm";
+import { and, eq, inArray, isNull, ne } from "drizzle-orm";
 import { db } from "@/db";
-import { devices, presentations, schedules } from "@/db/schema";
+import { devices, presentations, scheduleDevices, schedules } from "@/db/schema";
+import type { SQL } from "drizzle-orm";
 import { groupExists } from "./groups";
 
 export type ScheduleValues = {
   name: string;
   presentationId: string;
-  deviceId: string | null;
+  /** Pantallas elegidas (varias a la vez). Vacío y sin grupo = todas. */
+  deviceIds: string[];
   groupId: string | null;
   daysOfWeek: number;
   startTime: string;
@@ -33,13 +35,13 @@ function toSeconds(t: string) {
 
 /** Valida y normaliza un bloque. Con `base` (PATCH) se combina con los valores actuales. */
 export async function checkSchedule(body: ScheduleBody, base?: ScheduleValues): Promise<{ error: string } | { values: ScheduleValues }> {
-  const { name, presentationId, deviceId = null, groupId = null, daysOfWeek, startTime, endTime, enabled = true } = { ...base, ...body };
+  const { name, presentationId, deviceIds = [], groupId = null, daysOfWeek, startTime, endTime, enabled = true } = { ...base, ...body };
 
   if (typeof name !== "string" || !name.trim()) return { error: "Falta el nombre" };
   if (typeof presentationId !== "string" || !isUuid(presentationId)) return { error: "Elegí una presentación" };
-  if (deviceId !== null && (typeof deviceId !== "string" || !isUuid(deviceId))) return { error: "Pantalla inválida" };
+  if (!Array.isArray(deviceIds) || deviceIds.some((d) => typeof d !== "string" || !isUuid(d))) return { error: "Pantalla inválida" };
   if (groupId !== null && (typeof groupId !== "string" || !isUuid(groupId))) return { error: "Grupo inválido" };
-  if (deviceId !== null && groupId !== null) return { error: "Elegí una pantalla o un grupo, no ambos" };
+  if (deviceIds.length > 0 && groupId !== null) return { error: "Elegí pantallas o un grupo, no ambos" };
   if (typeof daysOfWeek !== "number" || !Number.isInteger(daysOfWeek) || daysOfWeek < 1 || daysOfWeek > 127) {
     return { error: "Elegí al menos un día" };
   }
@@ -50,13 +52,14 @@ export async function checkSchedule(body: ScheduleBody, base?: ScheduleValues): 
 
   const [presentation] = await db.select({ id: presentations.id }).from(presentations).where(eq(presentations.id, presentationId));
   if (!presentation) return { error: "La presentación no existe" };
-  if (deviceId) {
-    const [device] = await db.select({ id: devices.id }).from(devices).where(eq(devices.id, deviceId));
-    if (!device) return { error: "La pantalla no existe" };
+  const uniqueIds = [...new Set(deviceIds)];
+  if (uniqueIds.length) {
+    const found = await db.select({ id: devices.id }).from(devices).where(inArray(devices.id, uniqueIds));
+    if (found.length !== uniqueIds.length) return { error: "Alguna pantalla no existe" };
   }
   if (groupId && !(await groupExists(groupId))) return { error: "El grupo no existe" };
 
-  return { values: { name: name.trim(), presentationId, deviceId, groupId, daysOfWeek, startTime, endTime, enabled } };
+  return { values: { name: name.trim(), presentationId, deviceIds: uniqueIds, groupId, daysOfWeek, startTime, endTime, enabled } };
 }
 
 const hhmm = (t: string) => t.slice(0, 5);
@@ -72,17 +75,19 @@ export async function findConflict(
   self?: { id: string; validFrom: string | null; validUntil: string | null },
 ): Promise<string | null> {
   if (!v.enabled) return null;
-  const conds = [
-    eq(schedules.enabled, true),
-    v.deviceId ? eq(schedules.deviceId, v.deviceId) : isNull(schedules.deviceId),
-    v.groupId ? eq(schedules.groupId, v.groupId) : isNull(schedules.groupId),
-  ];
+  const conds = [eq(schedules.enabled, true), v.groupId ? eq(schedules.groupId, v.groupId) : isNull(schedules.groupId)];
   if (self) conds.push(ne(schedules.id, self.id));
-  const rows = await db.select().from(schedules).where(and(...conds));
+  const rows = await loadSchedules(and(...conds));
 
   const mine = { from: self?.validFrom ?? null, until: self?.validUntil ?? null };
+  const sameTarget = (s: (typeof rows)[number]) => {
+    if (v.groupId) return true; // ya filtrado por grupo
+    if (v.deviceIds.length === 0) return s.deviceIds.length === 0; // "todas" contra "todas"
+    return s.deviceIds.some((d) => v.deviceIds.includes(d)); // comparten alguna pantalla
+  };
   const hit = rows.find(
     (s) =>
+      sameTarget(s) &&
       (s.daysOfWeek & v.daysOfWeek) !== 0 &&
       toSeconds(s.startTime) < toSeconds(v.endTime) &&
       toSeconds(v.startTime) < toSeconds(s.endTime) &&
@@ -90,4 +95,32 @@ export async function findConflict(
       (!mine.from || !s.validUntil || mine.from <= s.validUntil),
   );
   return hit ? `Se superpone con "${hit.name}" (${hhmm(hit.startTime)}–${hhmm(hit.endTime)})` : null;
+}
+
+
+/** Bloques con la lista de pantallas a las que apuntan. */
+export async function loadSchedules(where?: SQL) {
+  const rows = await db.select().from(schedules).where(where);
+  if (!rows.length) return [];
+  const links = await db
+    .select()
+    .from(scheduleDevices)
+    .where(inArray(scheduleDevices.scheduleId, rows.map((r) => r.id)));
+  return rows.map((r) => ({ ...r, deviceIds: links.filter((l) => l.scheduleId === r.id).map((l) => l.deviceId) }));
+}
+
+/** Guarda un bloque y sus pantallas en una transacción (id = actualizar). */
+export async function saveSchedule(v: ScheduleValues, id?: string) {
+  const { deviceIds, ...row } = v;
+  return db.transaction(async (tx) => {
+    let scheduleId = id;
+    if (id) {
+      await tx.update(schedules).set(row).where(eq(schedules.id, id));
+      await tx.delete(scheduleDevices).where(eq(scheduleDevices.scheduleId, id));
+    } else {
+      [{ id: scheduleId }] = await tx.insert(schedules).values(row).returning({ id: schedules.id });
+    }
+    if (deviceIds.length) await tx.insert(scheduleDevices).values(deviceIds.map((deviceId) => ({ scheduleId: scheduleId!, deviceId })));
+    return scheduleId!;
+  });
 }
