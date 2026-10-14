@@ -1,0 +1,38 @@
+import { randomUUID } from "node:crypto";
+import { Readable } from "node:stream";
+import type { ReadableStream as WebReadableStream } from "node:stream/web";
+import { db } from "@/db";
+import { mediaAssets } from "@/db/schema";
+import { error, json } from "@/lib/http";
+import { BUCKET, minio, publicUrl } from "@/lib/storage";
+
+/**
+ * Subida en streaming: el navegador hace PUT con el archivo como cuerpo crudo,
+ * así un video 4K no se carga entero en memoria.
+ * Headers: content-type, content-length, x-file-name (URI-encoded).
+ */
+export async function PUT(req: Request) {
+  const mimeType = req.headers.get("content-type") ?? "";
+  const size = Number(req.headers.get("content-length"));
+  const originalName = decodeURIComponent(req.headers.get("x-file-name") ?? "archivo");
+  const kind = mimeType.startsWith("image/") ? "image" : mimeType.startsWith("video/") ? "video" : null;
+  if (!kind) return error("Solo se aceptan imágenes y videos", 415);
+  if (!req.body || !Number.isFinite(size) || size <= 0) return error("Archivo vacío");
+
+  const ext = originalName.includes(".") ? originalName.slice(originalName.lastIndexOf(".")).toLowerCase() : "";
+  const objectKey = `${new Date().toISOString().slice(0, 7)}/${randomUUID()}${ext}`;
+
+  await minio.putObject(
+    BUCKET,
+    objectKey,
+    Readable.fromWeb(req.body as unknown as WebReadableStream),
+    size,
+    { "Content-Type": mimeType },
+  );
+
+  const [asset] = await db
+    .insert(mediaAssets)
+    .values({ originalName, objectKey, mimeType, kind, sizeBytes: size })
+    .returning();
+  return json({ ...asset, url: publicUrl(asset.objectKey) }, 201);
+}

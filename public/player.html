@@ -1,0 +1,223 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cartelería</title>
+<style>
+  html, body { margin: 0; padding: 0; width: 100%; height: 100%; background: #000; overflow: hidden; cursor: none; }
+  body { font-family: Arial, Helvetica, sans-serif; color: #fff; }
+  #stage { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: #000; }
+  .media { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: contain; background: #000; }
+  #msg { position: absolute; top: 0; left: 0; width: 100%; height: 100%; text-align: center; display: none; }
+  #msg .inner { position: absolute; top: 50%; left: 0; width: 100%; margin-top: -14vw; }
+  #msg .small { font-size: 3vw; color: #a1a1aa; }
+  #msg .code { font-family: "Courier New", monospace; font-size: 18vw; font-weight: bold; letter-spacing: 0.15em; line-height: 1.1; }
+  #status { position: absolute; right: 1vw; bottom: 1vw; width: 1.2vw; height: 1.2vw; border-radius: 50%; background: #ef4444; display: none; }
+</style>
+</head>
+<body>
+<div id="stage"></div>
+<div id="msg"><div class="inner"><div class="small" id="msg-top"></div><div class="code" id="msg-code"></div><div class="small" id="msg-bottom"></div></div></div>
+<div id="status" title="Sin conexión con el servidor"></div>
+<script>
+/* Reproductor compatible con navegadores de TV antiguos: ES5, sin frameworks. */
+(function () {
+  'use strict';
+
+  var TOKEN_KEY = 'carteleria.token';
+  var stage = document.getElementById('stage');
+  var msgBox = document.getElementById('msg');
+  var statusDot = document.getElementById('status');
+
+  /* ---------- Almacenamiento del token (localStorage, con cookie de respaldo) ---------- */
+  function readToken() {
+    try { var t = window.localStorage.getItem(TOKEN_KEY); if (t) return t; } catch (e) {}
+    var m = document.cookie.match(/(?:^|; )carteleria_token=([^;]+)/);
+    return m ? decodeURIComponent(m[1]) : null;
+  }
+  function writeToken(token) {
+    try {
+      if (token) window.localStorage.setItem(TOKEN_KEY, token); else window.localStorage.removeItem(TOKEN_KEY);
+    } catch (e) {}
+    document.cookie = 'carteleria_token=' + (token ? encodeURIComponent(token) : '') +
+      '; path=/; max-age=' + (token ? 315360000 : 0);
+  }
+
+  /* ---------- Mensajes en pantalla ---------- */
+  function showMessage(top, code, bottom) {
+    document.getElementById('msg-top').textContent = top || '';
+    document.getElementById('msg-code').textContent = code || '';
+    document.getElementById('msg-bottom').textContent = bottom || '';
+    msgBox.style.display = 'block';
+  }
+  function hideMessage() { msgBox.style.display = 'none'; }
+
+  /* ---------- Reproducción ---------- */
+  var playlist = [];
+  var index = 0;
+  var generation = 0;      // se incrementa en cada cambio de contenido para invalidar timers viejos
+  var currentTimer = null;
+  var currentEl = null;
+
+  function clearStage() {
+    if (currentTimer) { clearTimeout(currentTimer); currentTimer = null; }
+    while (stage.firstChild) {
+      var el = stage.firstChild;
+      if (el.tagName === 'VIDEO') { try { el.pause(); el.removeAttribute('src'); el.load(); } catch (e) {} }
+      stage.removeChild(el);
+    }
+    currentEl = null;
+  }
+
+  function samePlaylist(a, b) {
+    if (a.length !== b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i].id !== b[i].id || a[i].url !== b[i].url || a[i].durationSeconds !== b[i].durationSeconds) return false;
+    }
+    return true;
+  }
+
+  function setPlaylist(items) {
+    if (samePlaylist(items, playlist) && currentEl) return; // sin cambios: no reiniciar
+    generation++;
+    playlist = items;
+    index = 0;
+    clearStage();
+    if (!items.length) return;
+    hideMessage();
+    playCurrent();
+  }
+
+  function advance(gen) {
+    if (gen !== generation) return;
+    index = (index + 1) % playlist.length;
+    playCurrent();
+  }
+
+  function preload(item) {
+    if (item && item.kind === 'image') { var img = new Image(); img.src = item.url; }
+  }
+
+  function playCurrent() {
+    var gen = generation;
+    var item = playlist[index];
+    var single = playlist.length === 1;
+    var el;
+
+    if (item.kind === 'image') {
+      el = document.createElement('img');
+      el.className = 'media';
+      el.onerror = function () { currentTimer = setTimeout(function () { advance(gen); }, 2000); };
+      el.src = item.url;
+    } else {
+      el = document.createElement('video');
+      el.className = 'media';
+      el.muted = true;
+      el.defaultMuted = true;
+      el.setAttribute('muted', '');
+      el.setAttribute('playsinline', '');
+      el.setAttribute('webkit-playsinline', '');
+      el.autoplay = true;
+      el.loop = single;
+      el.onended = function () { advance(gen); };
+      el.onerror = function () { currentTimer = setTimeout(function () { advance(gen); }, 2000); };
+      el.src = item.url;
+      var p = null;
+      try { p = el.play(); } catch (e) {}
+      if (p && p.catch) p.catch(function () {});
+      watchStall(el, gen);
+    }
+
+    // Reemplazo sin parpadeo: se agrega el nuevo elemento y luego se quita el anterior.
+    var old = currentEl;
+    stage.appendChild(el);
+    currentEl = el;
+    if (old && old.parentNode === stage) {
+      if (old.tagName === 'VIDEO') { try { old.pause(); old.removeAttribute('src'); old.load(); } catch (e) {} }
+      stage.removeChild(old);
+    }
+
+    if (item.kind === 'image') {
+      if (!single) currentTimer = setTimeout(function () { advance(gen); }, (item.durationSeconds || 10) * 1000);
+    } else if (item.durationSeconds && !single) {
+      currentTimer = setTimeout(function () { advance(gen); }, item.durationSeconds * 1000);
+    }
+    if (!single) preload(playlist[(index + 1) % playlist.length]);
+  }
+
+  // Si un video se queda trabado (sin avanzar) por más de 20 s, se salta al siguiente o se reintenta.
+  function watchStall(video, gen) {
+    var last = -1, stuck = 0;
+    var iv = setInterval(function () {
+      if (gen !== generation || video !== currentEl) { clearInterval(iv); return; }
+      if (video.paused && video.readyState >= 2) { try { video.play(); } catch (e) {} }
+      if (video.currentTime === last) stuck++; else { stuck = 0; last = video.currentTime; }
+      if (stuck >= 4) {
+        clearInterval(iv);
+        if (playlist.length > 1) advance(gen); else { try { video.load(); video.play(); } catch (e) {} watchStall(video, gen); }
+      }
+    }, 5000);
+  }
+
+  /* ---------- WebSocket ---------- */
+  var ws = null;
+  var retryMs = 1000;
+
+  function wsUrl() {
+    return (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws';
+  }
+
+  function onMessage(ev) {
+    var msg;
+    try { msg = JSON.parse(ev.data); } catch (e) { return; }
+    if (msg.type === 'pairing') {
+      generation++; playlist = []; clearStage();
+      showMessage('Código de vinculación', msg.code, 'Ingresalo en el panel, en Pantallas');
+    } else if (msg.type === 'paired') {
+      writeToken(msg.token);
+    } else if (msg.type === 'unpaired') {
+      writeToken(null);
+    } else if (msg.type === 'play') {
+      setPlaylist(msg.items || []);
+    } else if (msg.type === 'reload') {
+      location.reload();
+    }
+  }
+
+  function connect() {
+    try {
+      ws = new WebSocket(wsUrl());
+    } catch (e) {
+      statusDot.style.display = 'block';
+      setTimeout(connect, retryMs);
+      return;
+    }
+    ws.onopen = function () {
+      retryMs = 1000;
+      statusDot.style.display = 'none';
+      ws.send(JSON.stringify({ type: 'hello', token: readToken() }));
+    };
+    ws.onmessage = onMessage;
+    ws.onclose = function () {
+      // Si se corta la conexión se sigue mostrando lo último y se reintenta.
+      statusDot.style.display = 'block';
+      setTimeout(connect, retryMs);
+      retryMs = Math.min(retryMs * 2, 10000);
+    };
+    ws.onerror = function () { try { ws.close(); } catch (e) {} };
+  }
+
+  showMessage('Conectando…', '', '');
+  connect();
+
+  /* Pantalla completa con un toque / OK del control (donde esté permitido). */
+  document.addEventListener('click', function () {
+    var d = document.documentElement;
+    var fn = d.requestFullscreen || d.webkitRequestFullscreen || d.mozRequestFullScreen;
+    if (fn) { try { fn.call(d); } catch (e) {} }
+  });
+})();
+</script>
+</body>
+</html>
