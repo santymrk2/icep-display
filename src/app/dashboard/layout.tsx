@@ -4,6 +4,7 @@ const nav = [
   { href: "/dashboard/devices", label: "Pantallas" },
   { href: "/dashboard/media", label: "Medios" },
   { href: "/dashboard/presentations", label: "Presentaciones" },
+  { href: "/dashboard/calendar", label: "Calendario" },
 ];
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {

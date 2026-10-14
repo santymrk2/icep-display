@@ -36,6 +36,13 @@ Si cambiás `src/db/schema.ts`: `npm run db:generate` y se aplica al reiniciar.
 - Qué se muestra (`src/lib/playback.ts`): takeover activo > programación vigente > presentación por defecto de la pantalla.
 - Cada cambio (guardar presentación, takeover, etc.) vuelve a calcular y empuja el contenido a las pantallas conectadas; además hay un chequeo cada 30 s para horarios y takeovers que vencen.
 
+## Calendario
+
+- `/dashboard/calendar`: grilla semanal (06:00–23:00). Cada bloque es una franja de `schedules` con presentación, pantalla (o todas), días y horario; clic en un bloque para editarlo.
+- Los días se guardan como bitmask (bit 0 = domingo ... bit 6 = sábado) y las horas como `HH:MM:SS` en la zona horaria del servidor (`TZ`).
+- Los bloques desactivados se ven atenuados y no se reproducen. Si varios bloques se superponen, gana el de mayor `priority` (por ahora siempre 0, así que se usa el orden de la base).
+- API: `/api/schedules` (GET, POST) y `/api/schedules/[id]` (PATCH, DELETE). Cada cambio vuelve a calcular lo que muestra cada pantalla.
+
 ## Compatibilidad con TVs
 
 El reproductor (`public/player.html`) es HTML + JavaScript ES5 plano, sin React ni Tailwind, para que corra en navegadores de TV viejos (Tizen, webOS, Android TV, MSX). Detalles:
