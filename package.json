@@ -1,0 +1,35 @@
+{
+  "name": "carteleria",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch --env-file-if-exists=.env.dev --clear-screen=false server.ts",
+    "build": "next build",
+    "start": "NODE_ENV=production tsx server.ts",
+    "typecheck": "tsc --noEmit",
+    "db:generate": "drizzle-kit generate",
+    "db:studio": "drizzle-kit studio"
+  },
+  "dependencies": {
+    "drizzle-orm": "0.45.4",
+    "minio": "8.0.7",
+    "next": "15.5.28",
+    "postgres": "3.4.9",
+    "react": "19.1.1",
+    "react-dom": "19.1.1",
+    "tsx": "4.20.6",
+    "ws": "8.22.0"
+  },
+  "devDependencies": {
+    "@types/node": "22.18.12",
+    "@types/react": "19.1.17",
+    "@types/react-dom": "19.1.11",
+    "@types/ws": "8.18.1",
+    "autoprefixer": "10.4.21",
+    "drizzle-kit": "0.31.11",
+    "postcss": "8.5.6",
+    "tailwindcss": "3.4.18",
+    "typescript": "5.9.3"
+  }
+}

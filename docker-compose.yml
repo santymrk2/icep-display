@@ -1,0 +1,59 @@
+services:
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: carteleria
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?definir en .env}
+      POSTGRES_DB: carteleria
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U carteleria"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  minio:
+    image: minio/minio:latest
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?definir en .env}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?definir en .env}
+    volumes:
+      - miniodata:/data
+    # Sin puertos publicados: los archivos salen por la app (/files/*).
+    # Para ver la consola de MinIO, descomentar:
+    # ports: ["127.0.0.1:9001:9001"]
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  app:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    environment:
+      PORT: 3000
+      TZ: ${TZ:-UTC}
+      DATABASE_URL: postgres://carteleria:${POSTGRES_PASSWORD}@db:5432/carteleria
+      MINIO_ENDPOINT: minio
+      MINIO_PORT: 9000
+      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER}
+      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
+      MINIO_BUCKET: carteleria
+      ADMIN_USER: ${ADMIN_USER:-admin}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
+    ports:
+      - "3000:3000"
+
+volumes:
+  pgdata:
+  miniodata:
