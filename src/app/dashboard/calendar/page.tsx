@@ -25,8 +25,10 @@ type Form = {
   id: string | null;
   name: string;
   presentationId: string;
-  /** "" = todas las pantallas, "g:<id>" = grupo, "d:<id>" = pantalla. */
-  target: string;
+  /** A quién apunta: todas las pantallas, un grupo, o varias pantallas elegidas. */
+  mode: "all" | "group" | "devices";
+  groupId: string;
+  deviceIds: string[];
   days: boolean[];
   startTime: string;
   endTime: string;
@@ -37,7 +39,9 @@ const blankForm = (days: boolean[] = [false, true, true, true, true, true, false
   id: null,
   name: "",
   presentationId: "",
-  target: "",
+  mode: "all",
+  groupId: "",
+  deviceIds: [],
   days,
   startTime: "09:00",
   endTime: "10:00",
@@ -58,20 +62,21 @@ const addDays = (d: Date, n: number) => new Date(d.getFullYear(), d.getMonth(), 
 const startOfWeek = (d: Date) => addDays(d, -d.getDay());
 const sameDay = (a: Date, b: Date) => a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
 
-const targetOf = (s: { deviceId: string | null; groupId: string | null }) =>
-  s.groupId ? `g:${s.groupId}` : s.deviceId ? `d:${s.deviceId}` : "";
-
-const targetIds = (target: string) =>
-  target.startsWith("g:")
-    ? { deviceId: null, groupId: target.slice(2) }
-    : { deviceId: target.startsWith("d:") ? target.slice(2) : null, groupId: null };
+const targetIds = (f: Form) =>
+  f.mode === "group"
+    ? { deviceIds: [], groupId: f.groupId || null }
+    : f.mode === "devices"
+      ? { deviceIds: f.deviceIds, groupId: null }
+      : { deviceIds: [], groupId: null };
 
 function toForm(s: ScheduleDTO): Form {
   return {
     id: s.id,
     name: s.name,
     presentationId: s.presentationId,
-    target: targetOf(s),
+    mode: s.groupId ? "group" : s.deviceIds.length ? "devices" : "all",
+    groupId: s.groupId ?? "",
+    deviceIds: s.deviceIds,
     days: DAYS_LONG.map((_, i) => hasDay(s.daysOfWeek, i)),
     startTime: hhmm(s.startTime),
     endTime: hhmm(s.endTime),
@@ -138,6 +143,8 @@ export default function CalendarPage() {
   const [msg, setMsg] = useState<string | null>(null);
   const [msgError, setMsgError] = useState(false);
   const [view, setView] = useState<View>("semana");
+  /** "" = ver todo; si no, solo los bloques que afectan a esa pantalla. */
+  const [viewDevice, setViewDevice] = useState("");
   // Se fijan al montar para no producir diferencias entre servidor y cliente.
   const [now, setNow] = useState<Date | null>(null);
   const [cursor, setCursor] = useState<Date | null>(null);
@@ -161,7 +168,7 @@ export default function CalendarPage() {
   const colorOf = (id: string) => PALETTE[Math.max(0, presentations.findIndex((p) => p.id === id)) % PALETTE.length];
   const targetLabel = (s: ScheduleDTO) => {
     if (s.groupId) return `Grupo: ${groups.find((g) => g.id === s.groupId)?.name ?? "—"}`;
-    if (s.deviceId) return devices.find((d) => d.id === s.deviceId)?.name ?? "Pantalla";
+    if (s.deviceIds.length) return s.deviceIds.map((id) => devices.find((d) => d.id === id)?.name ?? "Pantalla").join(", ");
     return "Todas las pantallas";
   };
 
@@ -172,6 +179,8 @@ export default function CalendarPage() {
     form.name.trim() !== "" &&
     form.presentationId !== "" &&
     form.days.some(Boolean) &&
+    (form.mode !== "group" || form.groupId !== "") &&
+    (form.mode !== "devices" || form.deviceIds.length > 0) &&
     form.startTime < form.endTime;
 
   async function save(e: React.FormEvent) {
@@ -180,7 +189,7 @@ export default function CalendarPage() {
     const body = JSON.stringify({
       name: form.name,
       presentationId: form.presentationId,
-      ...targetIds(form.target),
+      ...targetIds(form),
       daysOfWeek: bitmask(form.days),
       startTime: form.startTime,
       endTime: form.endTime,
@@ -248,7 +257,12 @@ export default function CalendarPage() {
   }
 
   const isToday = (d: Date) => sameDay(d, now);
-  const onDate = (d: Date) => list.filter((s) => hasDay(s.daysOfWeek, d.getDay()));
+  const affects = (s: ScheduleDTO) => {
+    if (!viewDevice) return true;
+    const dev = devices.find((x) => x.id === viewDevice);
+    return s.deviceIds.includes(viewDevice) || (s.groupId !== null && s.groupId === dev?.groupId) || (s.groupId === null && s.deviceIds.length === 0);
+  };
+  const onDate = (d: Date) => list.filter((s) => affects(s) && hasDay(s.daysOfWeek, d.getDay()));
   const columns = view === "dia" ? [cursor] : Array.from({ length: 7 }, (_, i) => addDays(startOfWeek(cursor), i));
 
   const weekStart = startOfWeek(cursor);
@@ -287,6 +301,14 @@ export default function CalendarPage() {
             <button className="btn" onClick={() => setGroupsOpen(true)}>
               Grupos
             </button>
+            <select className="input w-auto" value={viewDevice} onChange={(e) => setViewDevice(e.target.value)} aria-label="Ver pantalla">
+              <option value="">Todas las pantallas</option>
+              {devices.map((d) => (
+                <option key={d.id} value={d.id}>
+                  Solo {d.name}
+                </option>
+              ))}
+            </select>
             <div className="ml-auto inline-flex rounded-lg border border-line bg-canvas p-0.5">
               {VIEWS.map((v) => (
                 <button
@@ -419,7 +441,7 @@ export default function CalendarPage() {
                               <div className="truncate font-semibold">{s.name}</div>
                               <div className="truncate opacity-80">
                                 {hhmm(s.startTime)} – {hhmm(s.endTime)}
-                                {(s.deviceId || s.groupId) && ` · ${targetLabel(s)}`}
+                                {(s.deviceIds.length > 0 || s.groupId) && ` · ${targetLabel(s)}`}
                               </div>
                             </button>
                           );
@@ -502,26 +524,57 @@ export default function CalendarPage() {
             </select>
           </label>
 
-          <label className="block space-y-1.5 text-sm">
-            <span className="text-zinc-400">Pantalla</span>
-            <select className="input w-full" value={form.target} onChange={(e) => set("target", e.target.value)}>
-              <option value="">Todas las pantallas</option>
-              <optgroup label="Grupos">
+          <div className="space-y-1.5 text-sm">
+            <span className="text-zinc-400">Pantallas</span>
+            <div className="inline-flex w-full rounded-lg border border-line bg-canvas p-0.5">
+              {([["all", "Todas"], ["group", "Grupo"], ["devices", "Elegir"]] as const).map(([m, label]) => (
+                <button
+                  key={m}
+                  type="button"
+                  onClick={() => set("mode", m)}
+                  className={`flex-1 rounded-md px-3 py-1.5 text-sm transition ${form.mode === m ? "bg-accent text-white" : "text-zinc-400 hover:text-zinc-100"}`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            {form.mode === "group" && (
+              <select className="input w-full" value={form.groupId} onChange={(e) => set("groupId", e.target.value)}>
+                <option value="">Elegí un grupo</option>
                 {groups.map((g) => (
-                  <option key={g.id} value={`g:${g.id}`}>
+                  <option key={g.id} value={g.id}>
                     {g.name}
                   </option>
                 ))}
-              </optgroup>
-              <optgroup label="Pantallas">
+              </select>
+            )}
+            {form.mode === "devices" && (
+              <div className="space-y-1 rounded-lg border border-line bg-canvas p-2">
+                {devices.length === 0 && <p className="text-zinc-500">Todavía no hay pantallas vinculadas.</p>}
+                {devices.length > 1 && (
+                  <button
+                    type="button"
+                    className="text-xs text-accent hover:underline"
+                    onClick={() => set("deviceIds", form.deviceIds.length === devices.length ? [] : devices.map((d) => d.id))}
+                  >
+                    {form.deviceIds.length === devices.length ? "Quitar todas" : "Seleccionar todas"}
+                  </button>
+                )}
                 {devices.map((d) => (
-                  <option key={d.id} value={`d:${d.id}`}>
+                  <label key={d.id} className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={form.deviceIds.includes(d.id)}
+                      onChange={(e) =>
+                        set("deviceIds", e.target.checked ? [...form.deviceIds, d.id] : form.deviceIds.filter((x) => x !== d.id))
+                      }
+                    />
                     {d.name}
-                  </option>
+                  </label>
                 ))}
-              </optgroup>
-            </select>
-          </label>
+              </div>
+            )}
+          </div>
 
           <label className="flex items-center gap-2 text-sm">
             <input type="checkbox" checked={form.enabled} onChange={(e) => set("enabled", e.target.checked)} />

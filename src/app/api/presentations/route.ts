@@ -11,8 +11,10 @@ export async function GET() {
       id: presentations.id,
       name: presentations.name,
       description: presentations.description,
+      orientation: presentations.orientation,
+      transition: presentations.transition,
       updatedAt: presentations.updatedAt,
-      itemCount: sql<number>`count(${presentationItems.id})::int`,
+      itemCount: sql<number>`count(${presentationItems.mediaAssetId})::int`,
     })
     .from(presentations)
     .leftJoin(presentationItems, eq(presentationItems.presentationId, presentations.id))
@@ -22,11 +24,15 @@ export async function GET() {
 }
 
 export async function POST(req: Request) {
-  const body = (await req.json()) as { name?: string; description?: string };
+  const body = (await req.json()) as { name?: string; description?: string; orientation?: string };
   if (!body.name?.trim()) return error("Falta el nombre");
   const [row] = await db
     .insert(presentations)
-    .values({ name: body.name.trim(), description: body.description?.trim() || null })
+    .values({
+      name: body.name.trim(),
+      description: body.description?.trim() || null,
+      orientation: body.orientation === "portrait" ? "portrait" : "landscape",
+    })
     .returning();
   return json(row, 201);
 }

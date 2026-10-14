@@ -20,6 +20,8 @@ export type MediaDTO = {
   kind: "image" | "video";
   mimeType: string;
   sizeBytes: number;
+  width: number | null;
+  height: number | null;
   folderId: string | null;
   uploadedAt: string;
 };
@@ -39,12 +41,43 @@ export type DeviceDTO = {
   lastSeenAt: string | null;
   tags: string[];
   groupId: string | null;
+  /** Resolución reportada por el reproductor (px CSS, sin aplicar el giro). */
+  screenWidth: number | null;
+  screenHeight: number | null;
+  /** Giro configurado en grados: 0, 90, 180 o 270. */
+  rotation: number;
+  /** Orientación real de la pantalla (con el giro aplicado); null si no se conoce. */
+  screenOrientation: Orientation | null;
+  /** Lo que muestra ahora mismo. */
+  content: { source: "takeover" | "schedule" | "default" | "none"; label: string | null; orientation: Orientation | null };
+};
+
+export type Orientation = "landscape" | "portrait";
+export type Transition = "cut" | "dissolve";
+
+export type TagDTO = {
+  /** null = etiqueta que solo existe en pantallas, todavía no registrada. */
+  id: string | null;
+  name: string;
+  description: string | null;
+  createdAt: string | null;
+  /** Nombres de las pantallas que la usan. */
+  devices: string[];
+};
+
+export type SettingsDTO = {
+  timezone: string;
+  defaultBackgroundId: string | null;
+  backgroundUrl: string | null;
+  sharePreviewLinks: boolean;
 };
 
 export type PresentationDTO = {
   id: string;
   name: string;
   description: string | null;
+  orientation: Orientation;
+  transition: Transition;
   itemCount: number;
 };
 
@@ -58,7 +91,8 @@ export type ScheduleDTO = {
   id: string;
   name: string;
   presentationId: string;
-  deviceId: string | null;
+  /** Pantallas elegidas; vacío sin grupo = todas. */
+  deviceIds: string[];
   groupId: string | null;
   daysOfWeek: number;
   startTime: string;
