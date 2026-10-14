@@ -277,7 +277,7 @@ export default function DevicesPage() {
 function ResolutionCell({ device: d }: { device: DeviceDTO }) {
   const res = d.screenWidth && d.screenHeight ? `${d.screenWidth}×${d.screenHeight}` : "—";
   const wanted = d.content.orientation;
-  const mismatch = wanted !== null && d.screenOrientation !== null && wanted !== d.screenOrientation;
+  const mismatch = !d.content.autoRotated && wanted !== null && d.screenOrientation !== null && wanted !== d.screenOrientation;
   return (
     <div className="flex flex-wrap items-center gap-2">
       <span className="whitespace-nowrap tabular-nums text-zinc-300">{res}</span>
@@ -285,6 +285,11 @@ function ResolutionCell({ device: d }: { device: DeviceDTO }) {
         <span className="pill">{ORIENTATION_LABEL[d.screenOrientation]}</span>
       ) : (
         <span className="text-zinc-500">—</span>
+      )}
+      {d.content.autoRotated && wanted && (
+        <span className="pill" title={`La presentación es ${ORIENTATION_LABEL[wanted].toLowerCase()} y esta pantalla es física ${d.screenWidth! >= d.screenHeight! ? "horizontal" : "vertical"}: la imagen se gira 90° automáticamente.`}>
+          Girada automáticamente
+        </span>
       )}
       {mismatch && wanted && (
         <span
@@ -709,11 +714,11 @@ function DeviceDrawer({
         >
           {ROTATIONS.map((r) => (
             <option key={r} value={r}>
-              {r}°
+              {r === 0 ? "Automático (0°)" : `${r}°`}
             </option>
           ))}
         </select>
-        <p className="text-xs text-zinc-500">Usalo si el TV está montado en vertical y no tiene opción de girar la imagen.</p>
+        <p className="text-xs text-zinc-500">En automático, una presentación vertical se gira sola en una pantalla horizontal (y al revés). Si queda cabeza abajo, elegí 270°. Un giro fijo (90°, 180°, 270°) se aplica siempre.</p>
       </label>
 
       <label className="block space-y-2">

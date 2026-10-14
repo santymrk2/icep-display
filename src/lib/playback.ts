@@ -1,6 +1,7 @@
 import { and, asc, desc, eq, gt, isNull, or } from "drizzle-orm";
 import { db } from "@/db";
 import { devices, mediaAssets, presentationItems, presentations, schedules, takeovers } from "@/db/schema";
+import { effectiveRotation } from "./orientation";
 import { loadSchedules } from "./schedules";
 import { publicUrl } from "./storage";
 import { backgroundUrl, getSettings, zonedParts } from "./settings";
@@ -47,7 +48,10 @@ async function presentationName(id: string) {
  * La hora local del servidor (variable TZ) define las franjas.
  */
 export async function resolvePlayback(deviceId: string, now = new Date()): Promise<Extract<ServerMessage, { type: "play" }>> {
-  const [device] = await db.select({ rotation: devices.rotation }).from(devices).where(eq(devices.id, deviceId));
+  const [device] = await db
+    .select({ rotation: devices.rotation, screenWidth: devices.screenWidth, screenHeight: devices.screenHeight })
+    .from(devices)
+    .where(eq(devices.id, deviceId));
   const cfg = await getSettings();
   const base = await resolveContent(deviceId, now, cfg.timezone);
   return {
@@ -57,7 +61,7 @@ export async function resolvePlayback(deviceId: string, now = new Date()): Promi
     items: base.items,
     orientation: base.style.orientation,
     transition: base.style.transition,
-    rotation: device?.rotation ?? 0,
+    rotation: device ? effectiveRotation(device, base.items.length ? base.style.orientation : null).rotation : 0,
     background: await backgroundUrl(cfg),
   };
 }

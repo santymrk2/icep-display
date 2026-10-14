@@ -49,7 +49,7 @@ export type DeviceDTO = {
   /** Orientación real de la pantalla (con el giro aplicado); null si no se conoce. */
   screenOrientation: Orientation | null;
   /** Lo que muestra ahora mismo. */
-  content: { source: "takeover" | "schedule" | "default" | "none"; label: string | null; orientation: Orientation | null };
+  content: { source: "takeover" | "schedule" | "default" | "none"; label: string | null; orientation: Orientation | null; autoRotated: boolean };
 };
 
 export type Orientation = "landscape" | "portrait";

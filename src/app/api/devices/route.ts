@@ -3,6 +3,7 @@ import { db } from "@/db";
 import { devices } from "@/db/schema";
 import { isOnline } from "@/lib/hub";
 import { json } from "@/lib/http";
+import { effectiveRotation } from "@/lib/orientation";
 import { resolvePlayback } from "@/lib/playback";
 
 export const dynamic = "force-dynamic";
@@ -17,12 +18,14 @@ export async function GET() {
         const swap = d.rotation === 90 || d.rotation === 270;
         const w = d.screenWidth, h = d.screenHeight;
         const screenOrientation = w && h ? ((swap ? w < h : w >= h) ? "landscape" : "portrait") : null;
+        const wanted = play.items.length ? play.orientation : null;
+        const autoRotated = effectiveRotation(d, wanted).auto;
         return {
           ...d,
           online: isOnline(d.id),
           screenOrientation,
           /** Qué se está mostrando ahora y con qué orientación fue diseñado. */
-          content: { source: play.source, label: play.label, orientation: play.items.length ? play.orientation : null },
+          content: { source: play.source, label: play.label, orientation: wanted, autoRotated },
         };
       }),
     ),
