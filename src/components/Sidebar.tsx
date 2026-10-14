@@ -19,7 +19,7 @@ export default function Sidebar() {
   const me = useMe();
   const nav = me?.role === "admin" ? [...baseNav, adminNav] : baseNav;
   return (
-    <nav className="flex w-[84px] shrink-0 flex-col items-center gap-3 border-r border-line bg-panel py-5">
+    <nav className="flex w-[84px] shrink-0 flex-col items-center gap-3 border-r border-line bg-bar py-5">
       {nav.map(({ href, label, Icon }) => {
         const active = path.startsWith(href);
         return (

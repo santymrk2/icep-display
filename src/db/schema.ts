@@ -18,12 +18,16 @@ import {
 export const mediaKind = pgEnum("media_kind", ["image", "video"]);
 export const orientation = pgEnum("orientation", ["landscape", "portrait"]);
 export const transitionKind = pgEnum("transition_kind", ["cut", "dissolve"]);
+export const recurrenceFreq = pgEnum("recurrence_freq", ["none", "day", "week", "month", "year"]);
+export const recurrenceEnd = pgEnum("recurrence_end", ["never", "on", "after"]);
 export const userRole = pgEnum("user_role", ["admin", "operator"]);
 
 /** Carpetas / colecciones virtuales para organizar medios. */
 export const mediaFolders = pgTable("media_folders", {
   id: uuid("id").primaryKey().defaultRandom(),
   name: text("name").notNull(),
+  /** Color del ícono de la carpeta (hex). */
+  color: text("color").notNull().default("#3b82f6"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
@@ -46,10 +50,18 @@ export const mediaAssets = pgTable("media_assets", {
   uploadedAt: timestamp("uploaded_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+/** Carpetas para ordenar presentaciones. */
+export const presentationFolders = pgTable("presentation_folders", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  name: text("name").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 /** Contenedor de listas de reproducción. */
 export const presentations = pgTable("presentations", {
   id: uuid("id").primaryKey().defaultRandom(),
   name: text("name").notNull(),
+  folderId: uuid("folder_id").references(() => presentationFolders.id, { onDelete: "set null" }),
   description: text("description"),
   /** Orientación de pantalla para la que se diseñó la presentación. */
   orientation: orientation("orientation").notNull().default("landscape"),
@@ -90,6 +102,14 @@ export const deviceGroups = pgTable("device_groups", {
   name: text("name").notNull(),
 });
 
+/** Calendarios: cada pantalla se suscribe a uno y reproduce sus eventos. */
+export const calendars = pgTable("calendars", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  name: text("name").notNull(),
+  color: text("color").notNull().default("#e11d48"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 /** Smart TVs / clientes autorizados. */
 export const devices = pgTable("devices", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -99,6 +119,8 @@ export const devices = pgTable("devices", {
   connectionToken: text("connection_token").notNull().unique(),
   groupId: uuid("group_id").references(() => deviceGroups.id, { onDelete: "set null" }),
   tags: text("tags").array().notNull().default(sql`'{}'::text[]`),
+  /** Calendario al que está suscripta (null = sin calendario). */
+  calendarId: uuid("calendar_id").references(() => calendars.id, { onDelete: "set null" }),
   /** Presentación por defecto cuando no hay programación ni takeover activo. */
   defaultPresentationId: uuid("default_presentation_id").references(() => presentations.id, {
     onDelete: "set null",
@@ -124,6 +146,17 @@ export const schedules = pgTable("schedules", {
     .notNull()
     .references(() => presentations.id, { onDelete: "cascade" }),
   groupId: uuid("group_id").references(() => deviceGroups.id, { onDelete: "cascade" }),
+  calendarId: uuid("calendar_id")
+    .notNull()
+    .references(() => calendars.id, { onDelete: "cascade" }),
+  allDay: boolean("all_day").notNull().default(false),
+  /** Repetición: none = evento único (en validFrom); si no, cada `interval` días/semanas/meses/años. */
+  freq: recurrenceFreq("freq").notNull().default("week"),
+  interval: integer("interval").notNull().default(1),
+  /** Cuándo termina: nunca, en la fecha validUntil, o tras `endsAfter` repeticiones. */
+  endsMode: recurrenceEnd("ends_mode").notNull().default("never"),
+  endsAfter: integer("ends_after"),
+  /** Días de la semana (bitmask) para repeticiones semanales. */
   daysOfWeek: smallint("days_of_week").notNull().default(127),
   startTime: time("start_time").notNull(),
   endTime: time("end_time").notNull(),

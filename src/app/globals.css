@@ -30,6 +30,10 @@ body {
 .card {
   @apply rounded-xl border border-line bg-panel;
 }
+/* Padding estándar de una página (el marco no lo trae). */
+.page {
+  @apply p-6 md:p-8;
+}
 /* Tabla estilo la referencia de diseño: caja con borde, encabezado más claro. */
 .table-shell {
   @apply overflow-hidden rounded-xl border border-line;
@@ -72,6 +76,6 @@ body {
   @apply w-full max-w-md rounded-2xl border border-line bg-panel shadow-2xl;
 }
 .drawer {
-  @apply fixed right-0 top-16 z-30 h-[calc(100vh-4rem)] w-full max-w-sm overflow-auto border-l border-line bg-panel p-5 shadow-2xl;
+  @apply fixed right-0 top-14 z-30 h-[calc(100vh-3.5rem)] w-full max-w-sm overflow-auto border-l border-line bg-panel p-5 shadow-2xl;
 }
 }

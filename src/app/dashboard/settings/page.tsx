@@ -85,7 +85,7 @@ export default function SettingsPage() {
     }, ok);
 
   return (
-    <div className="max-w-4xl space-y-6">
+    <div className="page max-w-4xl space-y-6">
       <h1 className="text-2xl font-semibold">Ajustes</h1>
 
       <div role="tablist" aria-label="Secciones de ajustes" className="flex gap-1 border-b border-line">

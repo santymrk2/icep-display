@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { db } from "@/db";
-import { devices } from "@/db/schema";
+import { asc } from "drizzle-orm";
+import { calendars, devices } from "@/db/schema";
 import { attachDevice, refreshDevice, send, takePendingSocket } from "@/lib/hub";
 import { error, json } from "@/lib/http";
 
@@ -18,7 +19,7 @@ export async function POST(req: Request) {
   const token = randomBytes(24).toString("base64url");
   const [device] = await db
     .insert(devices)
-    .values({ name, location: body.location?.trim() || null, connectionToken: token })
+    .values({ name, location: body.location?.trim() || null, connectionToken: token, calendarId: (await db.select({ id: calendars.id }).from(calendars).orderBy(asc(calendars.createdAt)).limit(1))[0]?.id ?? null })
     .returning();
 
   send(ws, { type: "paired", token, deviceId: device.id, name: device.name });

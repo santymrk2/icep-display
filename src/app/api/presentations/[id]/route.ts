@@ -1,6 +1,6 @@
 import { asc, eq } from "drizzle-orm";
 import { db } from "@/db";
-import { mediaAssets, presentationItems, presentations } from "@/db/schema";
+import { mediaAssets, presentationFolders, presentationItems, presentations } from "@/db/schema";
 import { refreshAll } from "@/lib/hub";
 import { error, json } from "@/lib/http";
 import { publicUrl } from "@/lib/storage";
@@ -36,6 +36,27 @@ export async function GET(_req: Request, { params }: Ctx) {
         : { type: "section" as const, name: item.sectionName ?? "Sección" },
     ),
   });
+}
+
+/** Renombra y/o mueve a una carpeta (folderId null = raíz) sin tocar los elementos. */
+export async function PATCH(req: Request, { params }: Ctx) {
+  const { id } = await params;
+  const body = (await req.json().catch(() => ({}))) as { name?: string; folderId?: string | null };
+  const patch: { name?: string; folderId?: string | null; updatedAt: Date } = { updatedAt: new Date() };
+  if (body.name !== undefined) {
+    if (!body.name.trim()) return error("El nombre no puede quedar vacío");
+    patch.name = body.name.trim();
+  }
+  if (body.folderId !== undefined) {
+    if (body.folderId !== null) {
+      const [f] = await db.select({ id: presentationFolders.id }).from(presentationFolders).where(eq(presentationFolders.id, body.folderId));
+      if (!f) return error("Carpeta no encontrada");
+    }
+    patch.folderId = body.folderId;
+  }
+  const [row] = await db.update(presentations).set(patch).where(eq(presentations.id, id)).returning({ id: presentations.id });
+  if (!row) return error("Presentación no encontrada", 404);
+  return json({ ok: true });
 }
 
 /** Reemplaza nombre, descripción y la lista completa de elementos (en orden). */

@@ -6,10 +6,11 @@ export default {
   theme: {
     extend: {
       colors: {
-        canvas: "#171717",
-        panel: "#262626",
-        raised: "#2e2e2e",
-        line: "#3a3a3a",
+        canvas: "#131313",
+        panel: "#1e1e1e",
+        raised: "#2b2b2b",
+        line: "#343434",
+        bar: "#262626",
         accent: "#2492ff",
       },
     },
