@@ -11,9 +11,10 @@ export async function GET() {
 }
 
 export async function POST(req: Request) {
-  const body = (await req.json().catch(() => ({}))) as { name?: string };
+  const body = (await req.json().catch(() => ({}))) as { name?: string; color?: string };
   const name = body.name?.trim() ?? "";
   if (!name) return error("El nombre de la carpeta no puede quedar vacío");
-  const [folder] = await db.insert(mediaFolders).values({ name }).returning();
+  const color = body.color && /^#[0-9a-f]{6}$/i.test(body.color) ? body.color : undefined;
+  const [folder] = await db.insert(mediaFolders).values({ name, color }).returning();
   return json(folder, 201);
 }

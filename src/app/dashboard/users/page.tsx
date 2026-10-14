@@ -40,7 +40,7 @@ export default function UsersPage() {
   };
 
   return (
-    <div className="max-w-3xl space-y-6">
+    <div className="page max-w-3xl space-y-6">
       <h1 className="text-2xl font-semibold">Usuarios</h1>
       <p className="text-sm text-zinc-400">
         Los administradores gestionan todo. Los operadores pueden ver el panel y poner contenido “al aire”, pero no cambiar nada más.

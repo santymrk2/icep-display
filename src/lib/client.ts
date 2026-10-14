@@ -29,6 +29,7 @@ export type MediaDTO = {
 export type FolderDTO = {
   id: string;
   name: string;
+  color: string;
   createdAt: string;
 };
 
@@ -41,6 +42,8 @@ export type DeviceDTO = {
   lastSeenAt: string | null;
   tags: string[];
   groupId: string | null;
+  /** Calendario al que está suscripta (null = ninguno). */
+  calendarId: string | null;
   /** Resolución reportada por el reproductor (px CSS, sin aplicar el giro). */
   screenWidth: number | null;
   screenHeight: number | null;
@@ -49,7 +52,7 @@ export type DeviceDTO = {
   /** Orientación real de la pantalla (con el giro aplicado); null si no se conoce. */
   screenOrientation: Orientation | null;
   /** Lo que muestra ahora mismo. */
-  content: { source: "takeover" | "schedule" | "default" | "none"; label: string | null; orientation: Orientation | null };
+  content: { source: "takeover" | "schedule" | "default" | "none"; label: string | null; orientation: Orientation | null; autoRotated: boolean };
 };
 
 export type Orientation = "landscape" | "portrait";
@@ -78,6 +81,7 @@ export type PresentationDTO = {
   description: string | null;
   orientation: Orientation;
   transition: Transition;
+  folderId: string | null;
   itemCount: number;
 };
 
@@ -91,13 +95,36 @@ export type ScheduleDTO = {
   id: string;
   name: string;
   presentationId: string;
-  /** Pantallas elegidas; vacío sin grupo = todas. */
+  calendarId: string;
+  allDay: boolean;
+  freq: "none" | "day" | "week" | "month" | "year";
+  interval: number;
+  endsMode: "never" | "on" | "after";
+  endsAfter: number | null;
+  /** Fecha de inicio ("AAAA-MM-DD"); en eventos únicos es el día del evento. */
+  validFrom: string | null;
+  validUntil: string | null;
+  /** Pantallas elegidas; vacío sin grupo = todas las del calendario. */
   deviceIds: string[];
   groupId: string | null;
   daysOfWeek: number;
   startTime: string;
   endTime: string;
   enabled: boolean;
+};
+
+export type CalendarDTO = {
+  id: string;
+  name: string;
+  color: string;
+  deviceCount: number;
+  eventCount: number;
+};
+
+export type PresentationFolderDTO = {
+  id: string;
+  name: string;
+  createdAt: string;
 };
 
 export function formatBytes(n: number) {

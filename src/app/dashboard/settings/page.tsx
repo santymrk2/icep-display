@@ -4,12 +4,14 @@ import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } fro
 import { api, type MediaDTO, type SettingsDTO, type TagDTO } from "@/lib/client";
 import { IconClose, IconPlus, IconSearch } from "@/components/Icons";
 
-type Tab = "general" | "tags";
+type Tab = "general" | "tags" | "providers";
 type Notice = { kind: "ok" | "error"; text: string } | null;
 type SettingsPatch = { timezone?: string; defaultBackgroundId?: string | null; sharePreviewLinks?: boolean };
 type RunFn = (fn: () => Promise<unknown>, ok?: string) => Promise<void>;
 
 const MAX_TAG_LENGTH = 24;
+/** Ancho del selector de zona horaria y de la zona de carga (referencia de diseño). */
+const FIELD_WIDTH = "max-w-[515px]";
 
 const FALLBACK_TIMEZONES = [
   "UTC",
@@ -85,14 +87,15 @@ export default function SettingsPage() {
     }, ok);
 
   return (
-    <div className="max-w-4xl space-y-6">
+    <div className="page max-w-4xl space-y-6">
       <h1 className="text-2xl font-semibold">Ajustes</h1>
 
-      <div role="tablist" aria-label="Secciones de ajustes" className="flex gap-1 border-b border-line">
+      <div role="tablist" aria-label="Secciones de ajustes" className="flex gap-8 border-b border-line">
         {(
           [
             ["general", "General"],
             ["tags", "Etiquetas"],
+            ["providers", "Proveedores de contenido"],
           ] as const
         ).map(([value, label]) => (
           <button
@@ -100,8 +103,8 @@ export default function SettingsPage() {
             role="tab"
             aria-selected={tab === value}
             onClick={() => setTab(value)}
-            className={`-mb-px border-b-2 px-4 py-2 text-sm font-medium transition-colors ${
-              tab === value ? "border-accent text-zinc-100" : "border-transparent text-zinc-400 hover:text-zinc-200"
+            className={`-mb-px border-b-2 pb-3 text-sm font-medium transition-colors ${
+              tab === value ? "border-accent text-accent" : "border-transparent text-zinc-400 hover:text-zinc-200"
             }`}
           >
             {label}
@@ -119,6 +122,8 @@ export default function SettingsPage() {
         ))}
 
       {tab === "tags" && <TagsTab run={run} />}
+
+      {tab === "providers" && <ProvidersTab />}
     </div>
   );
 }
@@ -168,11 +173,14 @@ function GeneralTab({
   }
 
   return (
-    <div className="space-y-6">
-      <section className="card space-y-3 p-5">
-        <h2 className="font-semibold">Zona horaria</h2>
+    <div className="space-y-10">
+      <section className="space-y-3">
+        <div className="space-y-1">
+          <h2 className="text-lg font-semibold">Zona horaria</h2>
+          <p className="text-sm text-zinc-400">La zona horaria se aplica a todos los calendarios.</p>
+        </div>
         <select
-          className="input w-full max-w-md"
+          className={`input w-full ${FIELD_WIDTH}`}
           value={settings.timezone}
           onChange={(e) => void onSave({ timezone: e.target.value }, "Zona horaria actualizada")}
         >
@@ -182,103 +190,88 @@ function GeneralTab({
             </option>
           ))}
         </select>
-        <p className="text-xs text-zinc-500">Se aplica a todos los calendarios.</p>
       </section>
 
-      <section className="card space-y-4 p-5">
+      <section className="space-y-3">
         <div className="space-y-1">
-          <h2 className="font-semibold">Fondo predeterminado</h2>
-          <p className="text-xs text-zinc-500">
+          <h2 className="text-lg font-semibold">Fondo predeterminado</h2>
+          <p className="text-sm text-zinc-400">
             Por defecto, los huecos sin contenido programado muestran fondo negro, salvo que subas una imagen acá.
           </p>
         </div>
 
-        <div className="flex flex-col gap-5 sm:flex-row sm:items-start">
-          <div className="flex aspect-video w-full shrink-0 items-center justify-center overflow-hidden rounded-lg border border-line bg-black sm:w-64">
-            {settings.backgroundUrl ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img src={settings.backgroundUrl} alt="Fondo predeterminado actual" className="h-full w-full object-cover" />
-            ) : (
-              <span className="text-xs text-zinc-500">Negro</span>
-            )}
-          </div>
-
-          <div className="flex-1 space-y-3">
-            <div
-              onDragOver={(e) => {
-                e.preventDefault();
-                setDragging(true);
-              }}
-              onDragLeave={() => setDragging(false)}
-              onDrop={onDrop}
-              className={`rounded-lg border-2 border-dashed p-6 text-center text-sm transition-colors ${
-                dragging ? "border-accent bg-accent/10" : "border-line"
-              }`}
+        {settings.backgroundUrl && (
+          <div className={`flex w-full items-center gap-4 rounded-xl border border-line bg-panel p-3 ${FIELD_WIDTH}`}>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={settings.backgroundUrl} alt="Fondo predeterminado actual" className="aspect-video w-32 rounded-lg object-cover" />
+            <span className="flex-1 text-sm text-zinc-400">Fondo actual</span>
+            <button
+              type="button"
+              className="btn"
+              onClick={() => void onSave({ defaultBackgroundId: null }, "Fondo quitado")}
             >
-              <p className="text-zinc-400">Arrastrá una imagen acá o</p>
-              <button
-                type="button"
-                className="mt-1 text-accent underline-offset-4 hover:underline disabled:opacity-50"
-                disabled={uploading}
-                onClick={() => fileRef.current?.click()}
-              >
-                {uploading ? "Subiendo…" : "subila desde tu equipo"}
-              </button>
-              <input
-                ref={fileRef}
-                type="file"
-                accept="image/*"
-                className="hidden"
-                onChange={(e) => {
-                  const file = e.target.files?.[0];
-                  e.target.value = "";
-                  if (file) void uploadBackground(file);
-                }}
-              />
-            </div>
-
-            <div className="flex flex-wrap gap-2">
-              <button type="button" className="btn" onClick={() => setPicking(true)}>
-                Elegir de Medios
-              </button>
-              {settings.backgroundUrl && (
-                <button
-                  type="button"
-                  className="btn"
-                  onClick={() => void onSave({ defaultBackgroundId: null }, "Fondo quitado")}
-                >
-                  Quitar
-                </button>
-              )}
-            </div>
+              Quitar
+            </button>
           </div>
+        )}
+
+        <div
+          onDragOver={(e) => {
+            e.preventDefault();
+            setDragging(true);
+          }}
+          onDragLeave={() => setDragging(false)}
+          onDrop={onDrop}
+          className={`flex w-full flex-col items-center gap-2 rounded-xl border-2 border-dashed px-6 py-10 text-center transition-colors ${FIELD_WIDTH} ${
+            dragging ? "border-accent bg-accent/10" : "border-line"
+          }`}
+        >
+          <IconDownload className="h-6 w-6 text-zinc-400" />
+          <p className="text-sm text-zinc-200">
+            Arrastrá una imagen acá o{" "}
+            <button
+              type="button"
+              className="text-accent underline-offset-4 hover:underline"
+              onClick={() => setPicking(true)}
+            >
+              Elegir de Medios
+            </button>
+          </p>
+          <p className="text-xs text-zinc-500">PNG, JPG, etc. · 1920 x 1080 recomendado</p>
+          <button
+            type="button"
+            className="mt-1 text-xs text-zinc-400 underline-offset-4 hover:text-accent hover:underline disabled:opacity-50"
+            disabled={uploading}
+            onClick={() => fileRef.current?.click()}
+          >
+            {uploading ? "Subiendo…" : "o subila desde tu equipo"}
+          </button>
+          <input
+            ref={fileRef}
+            type="file"
+            accept="image/*"
+            className="hidden"
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              e.target.value = "";
+              if (file) void uploadBackground(file);
+            }}
+          />
         </div>
       </section>
 
-      <section className="card flex items-start justify-between gap-4 p-5">
-        <div className="space-y-1">
-          <h2 className="font-semibold">Compartir enlaces de vista previa</h2>
-          <p className="text-sm text-zinc-400">Permite compartir enlaces de solo vista previa.</p>
-        </div>
-        <button
-          type="button"
-          role="switch"
-          aria-checked={settings.sharePreviewLinks}
-          aria-label="Compartir enlaces de vista previa"
-          onClick={() =>
+      <section className={`space-y-4 border-t border-line pt-8 ${FIELD_WIDTH}`}>
+        <Toggle
+          label="Compartir enlaces de vista previa"
+          description="Permite compartir enlaces de solo vista previa."
+          on={settings.sharePreviewLinks}
+          onChange={() =>
             void onSave(
               { sharePreviewLinks: !settings.sharePreviewLinks },
               settings.sharePreviewLinks ? "Enlaces de vista previa desactivados" : "Enlaces de vista previa activados",
             )
           }
-          className={`relative h-6 w-11 shrink-0 rounded-full transition-colors ${settings.sharePreviewLinks ? "bg-accent" : "bg-line"}`}
-        >
-          <span
-            className={`absolute top-0.5 h-5 w-5 rounded-full bg-white transition-transform ${
-              settings.sharePreviewLinks ? "translate-x-5" : "translate-x-0.5"
-            }`}
-          />
-        </button>
+        />
       </section>
 
       {picking && (
@@ -290,6 +283,52 @@ function GeneralTab({
           }}
         />
       )}
+    </div>
+  );
+}
+
+/** Interruptor con etiqueta "ON"/"OFF" a la derecha. */
+function Toggle({
+  label,
+  description,
+  on,
+  onChange,
+}: {
+  label: string;
+  description: string;
+  on: boolean;
+  onChange: () => void;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-6">
+      <div className="space-y-0.5">
+        <h3 className="text-sm font-medium text-zinc-100">{label}</h3>
+        <p className="text-xs text-zinc-400">{description}</p>
+      </div>
+      <div className="flex shrink-0 items-center gap-3">
+        <button
+          type="button"
+          role="switch"
+          aria-checked={on}
+          aria-label={label}
+          onClick={onChange}
+          className={`relative h-6 w-11 rounded-full transition-colors ${on ? "bg-accent" : "bg-line"}`}
+        >
+          <span
+            className={`absolute top-0.5 h-5 w-5 rounded-full bg-white transition-transform ${on ? "translate-x-5" : "translate-x-0.5"}`}
+          />
+        </button>
+        <span className="w-8 text-xs font-semibold tracking-wide text-zinc-300">{on ? "ON" : "OFF"}</span>
+      </div>
+    </div>
+  );
+}
+
+function ProvidersTab() {
+  return (
+    <div className="flex flex-col items-center gap-2 rounded-xl border border-dashed border-line py-16 text-center">
+      <p className="text-sm font-medium text-zinc-200">Próximamente</p>
+      <p className="text-xs text-zinc-500">Pronto vas a poder conectar proveedores de contenido desde acá.</p>
     </div>
   );
 }
@@ -569,5 +608,13 @@ function TagModal({ tag, onClose, onDone }: { tag: TagDTO | null; onClose: () =>
         </div>
       </form>
     </div>
+  );
+}
+
+function IconDownload({ className = "h-5 w-5" }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" className={className} aria-hidden>
+      <path d="M12 3v12m0 0-4-4m4 4 4-4M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" />
+    </svg>
   );
 }

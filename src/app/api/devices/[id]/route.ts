@@ -1,6 +1,6 @@
 import { eq } from "drizzle-orm";
 import { db } from "@/db";
-import { deviceGroups, devices } from "@/db/schema";
+import { calendars, deviceGroups, devices } from "@/db/schema";
 import { disconnectDevice, refreshDevice } from "@/lib/hub";
 import { error, json } from "@/lib/http";
 
@@ -33,6 +33,7 @@ export async function PATCH(req: Request, { params }: Ctx) {
     tags?: unknown;
     groupId?: string | null;
     rotation?: number;
+    calendarId?: string | null;
   };
   const patch: Partial<typeof devices.$inferInsert> = {};
   if (body.name !== undefined) {
@@ -41,6 +42,14 @@ export async function PATCH(req: Request, { params }: Ctx) {
   }
   if (body.location !== undefined) patch.location = body.location?.trim() || null;
   if (body.defaultPresentationId !== undefined) patch.defaultPresentationId = body.defaultPresentationId;
+  if (body.calendarId !== undefined) {
+    if (body.calendarId !== null) {
+      if (typeof body.calendarId !== "string" || !UUID_RE.test(body.calendarId)) return error("Calendario inválido");
+      const [c] = await db.select({ id: calendars.id }).from(calendars).where(eq(calendars.id, body.calendarId));
+      if (!c) return error("El calendario no existe");
+    }
+    patch.calendarId = body.calendarId;
+  }
   if (body.rotation !== undefined) {
     if (![0, 90, 180, 270].includes(body.rotation)) return error("El giro debe ser 0, 90, 180 o 270");
     patch.rotation = body.rotation;

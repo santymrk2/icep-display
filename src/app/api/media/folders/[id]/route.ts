@@ -7,10 +7,18 @@ type Ctx = { params: Promise<{ id: string }> };
 
 export async function PATCH(req: Request, { params }: Ctx) {
   const { id } = await params;
-  const body = (await req.json().catch(() => ({}))) as { name?: string };
-  const name = body.name?.trim() ?? "";
-  if (!name) return error("El nombre de la carpeta no puede quedar vacío");
-  const [row] = await db.update(mediaFolders).set({ name }).where(eq(mediaFolders.id, id)).returning();
+  const body = (await req.json().catch(() => ({}))) as { name?: string; color?: string };
+  const patch: { name?: string; color?: string } = {};
+  if (body.name !== undefined) {
+    patch.name = body.name.trim();
+    if (!patch.name) return error("El nombre de la carpeta no puede quedar vacío");
+  }
+  if (body.color !== undefined) {
+    if (!/^#[0-9a-f]{6}$/i.test(body.color)) return error("Color inválido");
+    patch.color = body.color;
+  }
+  if (!Object.keys(patch).length) return error("Nada para actualizar");
+  const [row] = await db.update(mediaFolders).set(patch).where(eq(mediaFolders.id, id)).returning();
   if (!row) return error("Carpeta no encontrada", 404);
   return json(row);
 }

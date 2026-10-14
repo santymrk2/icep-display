@@ -11,6 +11,7 @@ export async function GET() {
       id: presentations.id,
       name: presentations.name,
       description: presentations.description,
+      folderId: presentations.folderId,
       orientation: presentations.orientation,
       transition: presentations.transition,
       updatedAt: presentations.updatedAt,
@@ -24,7 +25,7 @@ export async function GET() {
 }
 
 export async function POST(req: Request) {
-  const body = (await req.json()) as { name?: string; description?: string; orientation?: string };
+  const body = (await req.json()) as { name?: string; description?: string; orientation?: string; folderId?: string | null };
   if (!body.name?.trim()) return error("Falta el nombre");
   const [row] = await db
     .insert(presentations)
@@ -32,6 +33,7 @@ export async function POST(req: Request) {
       name: body.name.trim(),
       description: body.description?.trim() || null,
       orientation: body.orientation === "portrait" ? "portrait" : "landscape",
+      folderId: body.folderId ?? null,
     })
     .returning();
   return json(row, 201);

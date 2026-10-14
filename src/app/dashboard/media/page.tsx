@@ -8,7 +8,7 @@ import { IconClose, IconFolder, IconMedia, IconPlus, IconSearch } from "@/compon
 type Upload = { name: string; progress: number; error?: string };
 type Flash = { error: boolean; text: string };
 /** Menú de acciones de una fila. key = "a:<assetId>" o "f:<folderId>". */
-type Menu = { key: string; view: "main" | "move"; top: number; right: number };
+type Menu = { key: string; view: "main" | "move" | "color"; top: number; right: number };
 /** Datos que se miden en el navegador antes de subir el archivo. */
 type Probe = { duration: number | null; width: number | null; height: number | null; thumb: Blob | null };
 
@@ -147,9 +147,24 @@ const typeLabel = (m: MediaDTO) => m.mimeType.split("/")[1] ?? m.kind;
 const kindLabel = (m: MediaDTO) => (m.kind === "video" ? "Video" : "Imagen");
 /** mm:ss para la duración de un video. */
 const fmtDuration = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
-const fmtDate = (iso: string) => new Date(iso).toLocaleString("es-AR", { dateStyle: "medium", timeStyle: "short" });
+const fmtDate = (iso: string) => new Date(iso).toLocaleString("es-AR", { dateStyle: "long", timeStyle: "short" });
 const fmtResolution = (m: MediaDTO) => (m.width && m.height ? `${m.width}×${m.height}` : "—");
-const menuItem = "flex w-full items-center px-3 py-2 text-left hover:bg-raised disabled:opacity-40 disabled:hover:bg-transparent";
+const menuItem = "flex w-full items-center px-4 py-2 text-left hover:bg-raised disabled:opacity-40 disabled:hover:bg-transparent";
+const FOLDER_COLORS = ["#2492ff", "#ff9f43", "#2ec4b6", "#a78bfa", "#f472b6", "#ef4444", "#facc15", "#9ca3af"];
+const MEDIA_DRAG = "application/x-media-ids";
+
+type SortKey = "name" | "type" | "date";
+
+function SortTh({ label, k, sort, onSort, className }: { label: string; k: SortKey; sort: { key: SortKey; dir: 1 | -1 }; onSort: (k: SortKey) => void; className?: string }) {
+  return (
+    <th className={className}>
+      <button className="inline-flex items-center gap-1.5 font-semibold hover:text-white" onClick={() => onSort(k)}>
+        {label}
+        <span className={sort.key === k ? "text-accent" : "text-zinc-500"}>{sort.key === k ? (sort.dir === 1 ? "↑" : "↓") : "↕"}</span>
+      </button>
+    </th>
+  );
+}
 
 export default function MediaPage() {
   const router = useRouter();
@@ -158,10 +173,17 @@ export default function MediaPage() {
   const [devices, setDevices] = useState<DeviceDTO[]>([]);
   const [uploads, setUploads] = useState<Upload[]>([]);
   const [dragging, setDragging] = useState(false);
+  const [dropFolder, setDropFolder] = useState<string | null>(null);
   const [target, setTarget] = useState("");
   /** null = raíz ("Mi biblioteca"). */
   const [folderId, setFolderId] = useState<string | null>(null);
   const [query, setQuery] = useState("");
+  const [typeFilter, setTypeFilter] = useState<"" | "image" | "video">("");
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const [addOpen, setAddOpen] = useState(false);
+  const [sort, setSort] = useState<{ key: SortKey; dir: 1 | -1 }>({ key: "date", dir: -1 });
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [bulkMove, setBulkMove] = useState(false);
   const [menu, setMenu] = useState<Menu | null>(null);
   const [inspectId, setInspectId] = useState<string | null>(null);
   const [flash, setFlash] = useState<Flash | null>(null);
@@ -176,7 +198,7 @@ export default function MediaPage() {
 
   useEffect(() => {
     load().catch((err: Error) => setFlash({ error: true, text: err.message }));
-    void api<DeviceDTO[]>("/api/devices").then(setDevices);
+    void api<DeviceDTO[]>("/api/devices").then(setDevices).catch(() => {});
   }, [load]);
 
   /** Ejecuta una acción mostrando el resultado o el error en el aviso superior. */
@@ -188,6 +210,13 @@ export default function MediaPage() {
     } catch (err) {
       setFlash({ error: true, text: (err as Error).message });
     }
+  }
+
+  function openFolder(id: string | null) {
+    setFolderId(id);
+    setSelected(new Set());
+    setMenu(null);
+    setBulkMove(false);
   }
 
   async function handleFiles(files: FileList | File[]) {
@@ -212,7 +241,7 @@ export default function MediaPage() {
     await load().catch(() => {});
   }
 
-  // Arrastrar: se contan entradas/salidas para que el resaltado no parpadee al pasar por hijos.
+  // Arrastrar archivos del sistema: se cuentan entradas/salidas para que el resaltado no parpadee.
   const isFileDrag = (e: React.DragEvent) => Array.from(e.dataTransfer.types).includes("Files");
   function onDragEnter(e: React.DragEvent) {
     if (!isFileDrag(e)) return;
@@ -236,6 +265,27 @@ export default function MediaPage() {
     void handleFiles(e.dataTransfer.files);
   }
 
+  /** Arrastrar una fila de medio hacia una carpeta (o hacia "Mi biblioteca"). */
+  const isRowDrag = (e: React.DragEvent) => Array.from(e.dataTransfer.types).includes(MEDIA_DRAG);
+  function dropOnFolder(e: React.DragEvent, dest: string | null) {
+    if (!isRowDrag(e)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    setDropFolder(null);
+    const ids = (e.dataTransfer.getData(MEDIA_DRAG) || "").split(",").filter(Boolean);
+    moveAssets(media.filter((m) => ids.includes(m.id)), dest);
+  }
+  const folderDropProps = (dest: string | null) => ({
+    onDragOver: (e: React.DragEvent) => {
+      if (!isRowDrag(e)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      setDropFolder(dest ?? "root");
+    },
+    onDragLeave: () => setDropFolder(null),
+    onDrop: (e: React.DragEvent) => dropOnFolder(e, dest),
+  });
+
   function createFolder() {
     const name = window.prompt("Nombre de la nueva carpeta")?.trim();
     if (!name) return;
@@ -255,31 +305,52 @@ export default function MediaPage() {
     });
   }
 
+  function recolorFolder(f: FolderDTO, color: string) {
+    void run(async () => {
+      await api(`/api/media/folders/${f.id}`, { method: "PATCH", body: JSON.stringify({ color }) });
+      await load();
+    });
+  }
+
+  function renameAsset(m: MediaDTO) {
+    const name = window.prompt("Nuevo nombre", m.originalName)?.trim();
+    if (!name || name === m.originalName) return;
+    void run(async () => {
+      await api(`/api/media/${m.id}`, { method: "PATCH", body: JSON.stringify({ name }) });
+      await load();
+    });
+  }
+
   function deleteFolder(f: FolderDTO) {
-    if (!confirm(`¿Borrar la carpeta "${f.name}"? Los archivos que contiene se mantienen en Mi biblioteca.`)) return;
+    if (!confirm(`¿Eliminar la carpeta "${f.name}"? Los archivos que contiene se mantienen en Mi biblioteca.`)) return;
     void run(async () => {
       await api(`/api/media/folders/${f.id}`, { method: "DELETE" });
       if (folderId === f.id) setFolderId(null);
       await load();
-      return `Carpeta "${f.name}" borrada`;
+      return `Carpeta "${f.name}" eliminada`;
     });
   }
 
-  function moveAsset(m: MediaDTO, dest: string | null) {
+  function moveAssets(list: MediaDTO[], dest: string | null) {
+    const items = list.filter((m) => m.folderId !== dest);
+    if (items.length === 0) return;
     void run(async () => {
-      await api(`/api/media/${m.id}`, { method: "PATCH", body: JSON.stringify({ folderId: dest }) });
+      await Promise.all(items.map((m) => api(`/api/media/${m.id}`, { method: "PATCH", body: JSON.stringify({ folderId: dest }) })));
+      setSelected(new Set());
       await load();
       const where = dest ? folders.find((f) => f.id === dest)?.name : "Mi biblioteca";
-      return `"${m.originalName}" movido a ${where}`;
+      return items.length === 1 ? `"${items[0].originalName}" movido a ${where}` : `${items.length} archivos movidos a ${where}`;
     });
   }
 
-  function removeAsset(m: MediaDTO) {
-    if (!confirm(`¿Eliminar "${m.originalName}"?`)) return;
+  function removeAssets(list: MediaDTO[]) {
+    if (list.length === 0) return;
+    if (!confirm(list.length === 1 ? `¿Eliminar "${list[0].originalName}"?` : `¿Eliminar ${list.length} archivos?`)) return;
     void run(async () => {
-      await api(`/api/media/${m.id}`, { method: "DELETE" });
+      await Promise.all(list.map((m) => api(`/api/media/${m.id}`, { method: "DELETE" })));
+      setSelected(new Set());
       await load();
-      return `"${m.originalName}" eliminado`;
+      return list.length === 1 ? `"${list[0].originalName}" eliminado` : `${list.length} archivos eliminados`;
     });
   }
 
@@ -324,55 +395,92 @@ export default function MediaPage() {
     e.stopPropagation();
     if (menu?.key === key) return setMenu(null);
     const r = e.currentTarget.getBoundingClientRect();
-    setMenu({ key, view: "main", top: r.bottom + 4, right: window.innerWidth - r.right });
+    const top = r.bottom + 4 + 280 > window.innerHeight ? Math.max(8, r.top - 284) : r.bottom + 4;
+    setMenu({ key, view: "main", top, right: window.innerWidth - r.right });
+  }
+
+  function onSort(key: SortKey) {
+    setSort((s) => (s.key === key ? { key, dir: (s.dir * -1) as 1 | -1 } : { key, dir: 1 }));
   }
 
   const q = query.trim().toLowerCase();
   const currentFolder = folders.find((f) => f.id === folderId) ?? null;
-  const visibleFolders = folderId === null ? folders.filter((f) => !q || f.name.toLowerCase().includes(q)) : [];
-  const visibleMedia = media.filter(
-    (m) => (folderId === null ? m.folderId === null : m.folderId === folderId) && (!q || m.originalName.toLowerCase().includes(q)),
+  const cmpText = (a: string, b: string) => a.localeCompare(b, "es", { sensitivity: "base", numeric: true });
+  const visibleFolders = (folderId === null ? folders.filter((f) => !q || f.name.toLowerCase().includes(q)) : []).sort((a, b) =>
+    sort.key === "date" ? sort.dir * (+new Date(a.createdAt) - +new Date(b.createdAt)) : sort.key === "name" ? sort.dir * cmpText(a.name, b.name) : cmpText(a.name, b.name),
   );
+  const visibleMedia = media
+    .filter(
+      (m) =>
+        (folderId === null ? m.folderId === null : m.folderId === folderId) &&
+        (!q || m.originalName.toLowerCase().includes(q)) &&
+        (!typeFilter || m.kind === typeFilter),
+    )
+    .sort((a, b) =>
+      sort.key === "date"
+        ? sort.dir * (+new Date(a.uploadedAt) - +new Date(b.uploadedAt))
+        : sort.key === "type"
+          ? sort.dir * cmpText(typeLabel(a), typeLabel(b)) || cmpText(a.originalName, b.originalName)
+          : sort.dir * cmpText(a.originalName, b.originalName),
+    );
   const menuAsset = menu?.key.startsWith("a:") ? media.find((m) => m.id === menu.key.slice(2)) : undefined;
   const menuFolder = menu?.key.startsWith("f:") ? folders.find((f) => f.id === menu.key.slice(2)) : undefined;
   const inspected = inspectId ? media.find((m) => m.id === inspectId) ?? null : null;
+  const selectedAssets = visibleMedia.filter((m) => selected.has(m.id));
+
+  function toggleSel(id: string) {
+    setSelected((s) => {
+      const n = new Set(s);
+      if (n.has(id)) n.delete(id);
+      else n.add(id);
+      return n;
+    });
+  }
 
   return (
-    <div className="flex flex-col gap-6 md:flex-row">
-      <aside className="card h-fit shrink-0 p-3 md:w-56">
-        <div className="px-2 pb-2 pt-1 text-xs font-semibold uppercase tracking-wide text-zinc-500">Biblioteca</div>
-        <button className="flex w-full items-center gap-2 rounded-lg bg-accent/15 px-3 py-2 text-left text-sm font-medium text-accent">
-          <IconMedia className="h-4 w-4" />
+    <div className="flex h-full min-h-0" onClick={() => (setFiltersOpen(false), setAddOpen(false))}>
+      <aside className="hidden w-[260px] shrink-0 border-r border-line bg-canvas md:block">
+        <h2 className="border-b border-line px-6 py-5 text-lg font-semibold">Bibliotecas de contenido</h2>
+        <button
+          onClick={() => openFolder(null)}
+          {...folderDropProps(null)}
+          className={`flex w-full items-center gap-3 border-y px-6 py-3 text-left text-sm ${
+            dropFolder === "root" ? "border-accent bg-accent/25" : "border-accent/60 bg-accent/10"
+          }`}
+        >
+          <IconMedia className="h-5 w-5 text-zinc-300" />
           Mi biblioteca
         </button>
       </aside>
 
-      <section
+      <div
+        className="relative flex min-w-0 flex-1 flex-col overflow-auto px-6 pb-10 pt-5 md:px-10"
         onDragEnter={onDragEnter}
         onDragOver={onDragOver}
         onDragLeave={onDragLeave}
         onDrop={onDrop}
-        className="relative min-w-0 flex-1 space-y-5"
       >
-        {dragging && (
-          <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-xl border-2 border-dashed border-accent bg-accent/10 text-sm font-medium text-accent backdrop-blur-[1px]">
-            {currentFolder ? `Soltá para subir a "${currentFolder.name}"` : "Soltá los archivos para subirlos a Mi biblioteca"}
-          </div>
-        )}
-
-        <div className="flex flex-wrap items-center gap-3">
-          <h1 className="flex flex-1 items-center gap-2 text-2xl font-semibold">
-            <IconMedia className="h-6 w-6 text-zinc-400" />
+        <div className="flex items-center gap-3 border-b border-line pb-4">
+          <h1 className="flex flex-1 items-center gap-2.5 text-lg font-semibold">
+            <IconMedia className="h-6 w-6 text-zinc-300" />
             Medios
           </h1>
-          <button className="btn" onClick={createFolder}>
-            <IconFolder className="h-4 w-4" />
-            Nueva carpeta
-          </button>
-          <button className="btn-primary" onClick={() => fileInput.current?.click()}>
-            <IconPlus />
-            Agregar
-          </button>
+          <div className="relative" onClick={(e) => e.stopPropagation()}>
+            <button className="btn-primary" onClick={() => setAddOpen((o) => !o)}>
+              <IconPlus />
+              Agregar
+            </button>
+            {addOpen && (
+              <div className="absolute right-0 top-full z-40 mt-1 w-48 overflow-hidden rounded-xl border border-line bg-panel py-1 text-sm shadow-2xl">
+                <button className={menuItem} onClick={() => (setAddOpen(false), fileInput.current?.click())}>
+                  Subir archivos
+                </button>
+                <button className={menuItem} onClick={() => (setAddOpen(false), createFolder())}>
+                  Nueva carpeta
+                </button>
+              </div>
+            )}
+          </div>
           <input
             ref={fileInput}
             type="file"
@@ -388,46 +496,62 @@ export default function MediaPage() {
         </div>
 
         {folderId !== null && (
-          <nav className="flex flex-wrap items-center gap-2 text-sm">
-            <button className="text-accent hover:underline" onClick={() => setFolderId(null)}>
-              ← Volver
-            </button>
-            <span className="text-zinc-600">|</span>
-            <button className="text-zinc-400 hover:text-zinc-100" onClick={() => setFolderId(null)}>
-              Mi biblioteca
+          <nav className="mt-4 flex flex-wrap items-center gap-2 text-sm">
+            <button className="text-accent hover:underline" onClick={() => openFolder(null)} {...folderDropProps(null)}>
+              ← Mi biblioteca
             </button>
             <span className="text-zinc-600">/</span>
             <span className="font-medium">{currentFolder?.name ?? "Carpeta no encontrada"}</span>
           </nav>
         )}
 
-        <div className="flex flex-wrap items-center gap-3">
-          <div className="relative w-full max-w-md flex-1">
+        <div className="mt-5 flex flex-wrap items-center gap-3">
+          <div className="relative w-full max-w-sm flex-1">
             <IconSearch className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500" />
-            <input className="input w-full pl-9" placeholder="Buscar..." value={query} onChange={(e) => setQuery(e.target.value)} />
+            <input className="input h-11 w-full pl-9" placeholder="Buscar..." value={query} onChange={(e) => setQuery(e.target.value)} />
           </div>
-          <div className="ml-auto flex flex-wrap items-center gap-3">
-            <label className="flex items-center gap-2 text-sm text-zinc-400">
-              Enviar a
-              <select className="input" value={target} onChange={(e) => setTarget(e.target.value)}>
-                <option value="">Todas las pantallas</option>
-                {devices.map((d) => (
-                  <option key={d.id} value={d.id}>
-                    {d.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <button className="btn" onClick={endTakeovers}>
-              Volver a la programación
+          <div className="relative" onClick={(e) => e.stopPropagation()}>
+            <button className={`btn h-11 border border-line bg-panel ${typeFilter || target ? "border-accent" : ""}`} onClick={() => setFiltersOpen((o) => !o)}>
+              <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                <path d="M4 7h10M18 7h2M4 17h2M10 17h10" />
+                <circle cx="16" cy="7" r="2" />
+                <circle cx="8" cy="17" r="2" />
+              </svg>
+              Filtros
             </button>
+            {filtersOpen && (
+              <div className="absolute left-0 top-full z-40 mt-1 w-72 space-y-4 rounded-xl border border-line bg-panel p-4 text-sm shadow-2xl">
+                <label className="block space-y-1.5">
+                  <span className="text-zinc-400">Tipo</span>
+                  <select className="input w-full" value={typeFilter} onChange={(e) => setTypeFilter(e.target.value as "" | "image" | "video")}>
+                    <option value="">Todos</option>
+                    <option value="image">Imagen</option>
+                    <option value="video">Video</option>
+                  </select>
+                </label>
+                <label className="block space-y-1.5">
+                  <span className="text-zinc-400">Poner al aire en</span>
+                  <select className="input w-full" value={target} onChange={(e) => setTarget(e.target.value)}>
+                    <option value="">Todas las pantallas</option>
+                    {devices.map((d) => (
+                      <option key={d.id} value={d.id}>
+                        {d.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <button className="btn w-full" onClick={() => (setFiltersOpen(false), endTakeovers())}>
+                  Volver a la programación
+                </button>
+              </div>
+            )}
           </div>
         </div>
 
-        {flash && <p className={`text-sm ${flash.error ? "text-red-400" : "text-emerald-400"}`}>{flash.text}</p>}
+        {flash && <p className={`mt-4 text-sm ${flash.error ? "text-red-400" : "text-emerald-400"}`}>{flash.text}</p>}
 
         {uploads.length > 0 && (
-          <ul className="card divide-y divide-line text-sm">
+          <ul className="card mt-4 divide-y divide-line text-sm">
             {uploads.map((u, i) => (
               <li key={i} className="space-y-1.5 px-4 py-2.5">
                 <div className="flex items-center gap-3">
@@ -448,101 +572,170 @@ export default function MediaPage() {
           </ul>
         )}
 
-        <div className="table-shell overflow-x-auto">
-          <table className="min-w-[760px]">
-            <thead>
-              <tr>
-                <th className="w-32">
-                  <span className="sr-only">Vista previa</span>
-                </th>
-                <th>Nombre</th>
-                <th>Tipo</th>
-                <th>Duración</th>
-                <th>Peso</th>
-                <th>Fecha de alta</th>
-                <th className="w-12">
-                  <span className="sr-only">Acciones</span>
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {visibleFolders.map((f) => (
-                <tr key={`f-${f.id}`} className="row-click" onClick={() => setFolderId(f.id)}>
-                  <td>
-                    <div className="flex aspect-video w-24 items-center justify-center rounded-md bg-raised text-amber-400">
-                      <IconFolder className="h-6 w-6" />
-                    </div>
-                  </td>
-                  <td className="font-medium">{f.name}</td>
-                  <td className="text-zinc-400">Carpeta</td>
-                  <td className="text-zinc-500">—</td>
-                  <td className="text-zinc-500">—</td>
-                  <td className="whitespace-nowrap text-zinc-400">{fmtDate(f.createdAt)}</td>
-                  <td className="text-right">
-                    <button
-                      aria-label={`Acciones de ${f.name}`}
-                      className="rounded-md px-2 py-1 text-zinc-400 hover:bg-raised hover:text-zinc-100"
-                      onClick={(e) => openMenu(e, `f:${f.id}`)}
-                    >
-                      ...
+        {selectedAssets.length > 0 && (
+          <div className="relative mt-5 flex items-center gap-3 rounded-xl border border-accent/50 bg-accent/10 px-4 py-2 text-sm" onClick={(e) => e.stopPropagation()}>
+            <span className="flex-1 font-medium">
+              {selectedAssets.length} {selectedAssets.length === 1 ? "seleccionado" : "seleccionados"}
+            </span>
+            <div className="relative">
+              <button className="btn" onClick={() => setBulkMove((o) => !o)}>
+                Mover a carpeta
+              </button>
+              {bulkMove && (
+                <div className="absolute right-0 top-full z-40 mt-1 max-h-64 w-56 overflow-auto rounded-xl border border-line bg-panel py-1 shadow-2xl">
+                  {folderId !== null && (
+                    <button className={menuItem} onClick={() => (setBulkMove(false), moveAssets(selectedAssets, null))}>
+                      Mi biblioteca
                     </button>
-                  </td>
-                </tr>
-              ))}
-
-              {visibleMedia.map((m) => (
-                <tr key={m.id}>
-                  <td>
-                    <div className="aspect-video w-24 overflow-hidden rounded-md bg-black">
-                      {m.thumbnailUrl ? (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img src={m.thumbnailUrl} alt="" loading="lazy" className="h-full w-full object-cover" />
-                      ) : m.kind === "image" ? (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img src={m.url} alt="" loading="lazy" className="h-full w-full object-cover" />
-                      ) : (
-                        <video src={`${m.url}#t=1`} preload="metadata" muted playsInline className="h-full w-full object-cover" />
-                      )}
-                    </div>
-                  </td>
-                  <td className="max-w-xs truncate" title={m.originalName}>
-                    {m.originalName}
-                  </td>
-                  <td className="text-zinc-400">{typeLabel(m)}</td>
-                  <td className="whitespace-nowrap tabular-nums text-zinc-400">
-                    {m.kind === "video" && m.durationSeconds != null ? fmtDuration(m.durationSeconds) : "—"}
-                  </td>
-                  <td className="whitespace-nowrap text-zinc-400">{formatBytes(m.sizeBytes)}</td>
-                  <td className="whitespace-nowrap text-zinc-400">{fmtDate(m.uploadedAt)}</td>
-                  <td className="text-right">
-                    <button
-                      aria-label={`Acciones de ${m.originalName}`}
-                      className="rounded-md px-2 py-1 text-zinc-400 hover:bg-raised hover:text-zinc-100"
-                      onClick={(e) => openMenu(e, `a:${m.id}`)}
-                    >
-                      ...
-                    </button>
-                  </td>
-                </tr>
-              ))}
-
-              {visibleFolders.length === 0 && visibleMedia.length === 0 && (
-                <tr>
-                  <td colSpan={7} className="py-12 text-center text-zinc-500">
-                    {q ? "Sin resultados" : folderId === null ? "Todavía no hay medios. Arrastrá archivos acá o usá Agregar." : "Esta carpeta está vacía."}
-                  </td>
-                </tr>
+                  )}
+                  {folders
+                    .filter((f) => f.id !== folderId)
+                    .map((f) => (
+                      <button key={f.id} className={menuItem} onClick={() => (setBulkMove(false), moveAssets(selectedAssets, f.id))}>
+                        <span className="truncate">{f.name}</span>
+                      </button>
+                    ))}
+                  {folders.length === 0 && folderId === null && <p className="px-4 py-2 text-xs text-zinc-500">Todavía no hay carpetas.</p>}
+                </div>
               )}
-            </tbody>
-          </table>
+            </div>
+            <button className="btn bg-red-700/80 hover:bg-red-600" onClick={() => removeAssets(selectedAssets)}>
+              Eliminar
+            </button>
+            <button aria-label="Limpiar selección" className="rounded-lg p-1 text-zinc-400 hover:text-zinc-100" onClick={() => setSelected(new Set())}>
+              <IconClose />
+            </button>
+          </div>
+        )}
+
+        <div className="relative mt-5 min-h-[320px]">
+          {dragging && (
+            <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center rounded-xl border-2 border-dashed border-accent bg-accent/10 text-sm font-medium text-accent">
+              {currentFolder ? `Soltá los archivos para subirlos a "${currentFolder.name}"` : "Soltá los archivos para subirlos"}
+            </div>
+          )}
+          <div className="table-shell overflow-x-auto">
+            <table className="min-w-[680px]">
+              <thead>
+                <tr>
+                  <th className="w-[140px]">
+                    <span className="sr-only">Vista previa</span>
+                  </th>
+                  <SortTh label="Nombre" k="name" sort={sort} onSort={onSort} />
+                  <SortTh label="Tipo" k="type" sort={sort} onSort={onSort} />
+                  <SortTh label="Fecha de alta" k="date" sort={sort} onSort={onSort} />
+                  <th className="w-12">
+                    <span className="sr-only">Acciones</span>
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {visibleFolders.map((f) => (
+                  <tr
+                    key={`f-${f.id}`}
+                    className={`row-click ${menu?.key === `f:${f.id}` ? "bg-white/[0.05]" : ""} ${dropFolder === f.id ? "!bg-accent/20 outline outline-2 -outline-offset-2 outline-accent" : ""}`}
+                    onClick={() => openFolder(f.id)}
+                    {...folderDropProps(f.id)}
+                  >
+                    <td className="py-2">
+                      <div className="ml-6 flex h-[46px] w-[84px] items-center justify-center rounded-full border border-line bg-canvas" style={{ color: f.color }}>
+                        <IconFolder className="h-6 w-6" />
+                      </div>
+                    </td>
+                    <td className="font-medium">{f.name}</td>
+                    <td className="text-zinc-400" />
+                    <td className="whitespace-nowrap text-zinc-300">{fmtDate(f.createdAt)}</td>
+                    <td className="text-right">
+                      <button
+                        aria-label={`Acciones de ${f.name}`}
+                        className="rounded-md px-2 py-1 text-zinc-300 hover:bg-raised hover:text-zinc-100"
+                        onClick={(e) => openMenu(e, `f:${f.id}`)}
+                      >
+                        •••
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+
+                {visibleMedia.map((m) => {
+                  const isSel = selected.has(m.id);
+                  const active = isSel || menu?.key === `a:${m.id}`;
+                  return (
+                    <tr
+                      key={m.id}
+                      draggable
+                      onDragStart={(e) => {
+                        const ids = isSel ? selectedAssets.map((x) => x.id) : [m.id];
+                        e.dataTransfer.setData(MEDIA_DRAG, ids.join(","));
+                        e.dataTransfer.effectAllowed = "move";
+                      }}
+                      onDragEnd={() => setDropFolder(null)}
+                      onClick={() => setSelected(new Set([m.id]))}
+                      className={`group row-click ${active ? "!bg-accent/10 outline outline-1 -outline-offset-1 outline-accent/60" : ""}`}
+                    >
+                      <td className="py-2">
+                        <div className="flex items-center gap-3 pl-3">
+                          <input
+                            type="checkbox"
+                            checked={isSel}
+                            aria-label={`Seleccionar ${m.originalName}`}
+                            onClick={(e) => e.stopPropagation()}
+                            onChange={() => toggleSel(m.id)}
+                            className={`h-5 w-5 shrink-0 accent-[#2492ff] ${isSel ? "" : "opacity-0 group-hover:opacity-100"}`}
+                          />
+                          <div className="h-[46px] w-[70px] shrink-0 overflow-hidden rounded bg-black">
+                            {m.thumbnailUrl ? (
+                              // eslint-disable-next-line @next/next/no-img-element
+                              <img src={m.thumbnailUrl} alt="" loading="lazy" draggable={false} className="h-full w-full object-cover" />
+                            ) : m.kind === "image" ? (
+                              // eslint-disable-next-line @next/next/no-img-element
+                              <img src={m.url} alt="" loading="lazy" draggable={false} className="h-full w-full object-cover" />
+                            ) : (
+                              <video src={`${m.url}#t=1`} preload="metadata" muted playsInline className="h-full w-full object-cover" />
+                            )}
+                          </div>
+                        </div>
+                      </td>
+                      <td className="max-w-xs truncate" title={m.originalName}>
+                        {m.originalName}
+                      </td>
+                      <td className="text-zinc-300">{typeLabel(m)}</td>
+                      <td className="whitespace-nowrap text-zinc-300">{fmtDate(m.uploadedAt)}</td>
+                      <td className="text-right">
+                        <button
+                          aria-label={`Acciones de ${m.originalName}`}
+                          className="rounded-md px-2 py-1 text-zinc-300 hover:bg-raised hover:text-zinc-100"
+                          onClick={(e) => openMenu(e, `a:${m.id}`)}
+                        >
+                          •••
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+
+                {visibleFolders.length === 0 && visibleMedia.length === 0 && (
+                  <tr>
+                    <td colSpan={5} className="py-12 text-center text-zinc-500">
+                      {q || typeFilter
+                        ? "Sin resultados"
+                        : folderId === null
+                          ? "Todavía no hay medios. Arrastrá archivos acá o usá Agregar."
+                          : "Esta carpeta está vacía. Arrastrá archivos acá para subirlos."}
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
         </div>
-      </section>
+      </div>
 
       {menu && (menuAsset || menuFolder) && (
         <>
-          <div className="fixed inset-0 z-40" onClick={() => setMenu(null)} />
+          <div className="fixed inset-0 z-40" onClick={(e) => (e.stopPropagation(), setMenu(null))} />
           <div
-            className="fixed z-50 w-60 overflow-hidden rounded-xl border border-line bg-panel py-1 text-sm shadow-2xl"
+            className="fixed z-50 w-64 overflow-hidden rounded-xl border border-line bg-panel py-1 text-sm shadow-2xl"
             style={{ top: menu.top, right: menu.right }}
           >
             {menuAsset && menu.view === "main" && (
@@ -550,17 +743,19 @@ export default function MediaPage() {
                 <button className={menuItem} onClick={() => (setMenu(null), setInspectId(menuAsset.id))}>
                   Inspeccionar
                 </button>
-                <button className={menuItem} onClick={() => (setMenu(null), takeover(menuAsset))}>
-                  Poner al aire
-                </button>
                 <button className={menuItem} onClick={() => (setMenu(null), addToNewPresentation(menuAsset))}>
                   Agregar a nueva presentación
+                </button>
+                <button className={menuItem} onClick={() => (setMenu(null), takeover(menuAsset))}>
+                  Poner al aire
                 </button>
                 <button className={menuItem} onClick={() => setMenu({ ...menu, view: "move" })}>
                   Mover a carpeta…
                 </button>
-                <div className="my-1 border-t border-line" />
-                <button className={`${menuItem} text-red-400`} onClick={() => (setMenu(null), removeAsset(menuAsset))}>
+                <button className={menuItem} onClick={() => (setMenu(null), renameAsset(menuAsset))}>
+                  Renombrar
+                </button>
+                <button className={`${menuItem} text-red-400`} onClick={() => (setMenu(null), removeAssets([menuAsset]))}>
                   Eliminar
                 </button>
               </>
@@ -568,39 +763,55 @@ export default function MediaPage() {
 
             {menuAsset && menu.view === "move" && (
               <>
-                <button className="px-3 py-2 text-left text-xs text-zinc-400 hover:text-zinc-100" onClick={() => setMenu({ ...menu, view: "main" })}>
+                <button className="px-4 py-2 text-left text-xs text-zinc-400 hover:text-zinc-100" onClick={() => setMenu({ ...menu, view: "main" })}>
                   ← Mover a…
                 </button>
                 <div className="my-1 border-t border-line" />
-                <button className={menuItem} disabled={menuAsset.folderId === null} onClick={() => (setMenu(null), moveAsset(menuAsset, null))}>
+                <button className={menuItem} disabled={menuAsset.folderId === null} onClick={() => (setMenu(null), moveAssets([menuAsset], null))}>
                   Mi biblioteca
                 </button>
                 {folders.map((f) => (
-                  <button
-                    key={f.id}
-                    className={menuItem}
-                    disabled={menuAsset.folderId === f.id}
-                    onClick={() => (setMenu(null), moveAsset(menuAsset, f.id))}
-                  >
+                  <button key={f.id} className={menuItem} disabled={menuAsset.folderId === f.id} onClick={() => (setMenu(null), moveAssets([menuAsset], f.id))}>
                     <span className="truncate">{f.name}</span>
                   </button>
                 ))}
-                {folders.length === 0 && <p className="px-3 py-2 text-xs text-zinc-500">Todavía no hay carpetas.</p>}
+                {folders.length === 0 && <p className="px-4 py-2 text-xs text-zinc-500">Todavía no hay carpetas.</p>}
               </>
             )}
 
-            {menuFolder && (
+            {menuFolder && menu.view === "main" && (
               <>
-                <button className={menuItem} onClick={() => (setMenu(null), setFolderId(menuFolder.id))}>
+                <button className={menuItem} onClick={() => openFolder(menuFolder.id)}>
                   Abrir
+                </button>
+                <button className={menuItem} onClick={() => setMenu({ ...menu, view: "color" })}>
+                  Cambiar color…
                 </button>
                 <button className={menuItem} onClick={() => (setMenu(null), renameFolder(menuFolder))}>
                   Renombrar
                 </button>
-                <div className="my-1 border-t border-line" />
                 <button className={`${menuItem} text-red-400`} onClick={() => (setMenu(null), deleteFolder(menuFolder))}>
-                  Borrar carpeta
+                  Eliminar
                 </button>
+              </>
+            )}
+
+            {menuFolder && menu.view === "color" && (
+              <>
+                <button className="px-4 py-2 text-left text-xs text-zinc-400 hover:text-zinc-100" onClick={() => setMenu({ ...menu, view: "main" })}>
+                  ← Color de la carpeta
+                </button>
+                <div className="flex flex-wrap gap-2 px-4 py-3">
+                  {FOLDER_COLORS.map((c) => (
+                    <button
+                      key={c}
+                      aria-label={c}
+                      onClick={() => (setMenu(null), recolorFolder(menuFolder, c))}
+                      className={`h-7 w-7 rounded-full border-2 ${menuFolder.color.toLowerCase() === c ? "border-white" : "border-transparent"}`}
+                      style={{ background: c }}
+                    />
+                  ))}
+                </div>
               </>
             )}
           </div>
@@ -623,45 +834,47 @@ function InspectDrawer({ media: m, onClose }: { media: MediaDTO; onClose: () => 
   const rows: [string, string][] = [
     ["Tipo", kindLabel(m)],
     ["Duración", m.kind === "video" && m.durationSeconds != null ? fmtDuration(m.durationSeconds) : "—"],
-    ["Formato", m.mimeType],
+    ["Formato", (m.mimeType.split("/")[1] ?? m.mimeType).toUpperCase()],
     ["Tamaño", formatBytes(m.sizeBytes)],
     ["Resolución", fmtResolution(m)],
+    ["FPS", "—"],
   ];
 
   return (
-    <aside className="drawer space-y-6" role="dialog" aria-label={`Detalles de ${m.originalName}`}>
+    <aside className="drawer space-y-4" role="dialog" aria-label={`Inspector de ${m.originalName}`}>
       <div className="flex items-center gap-3">
-        <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-raised">
-          <IconMedia className="h-5 w-5 text-accent" />
+        <span className="flex h-9 w-9 items-center justify-center rounded-full bg-accent/10">
+          <IconSearch className="h-5 w-5 text-accent" />
         </span>
-        <h2 className="flex-1 text-lg font-semibold">Detalles</h2>
-        <button onClick={onClose} aria-label="Cerrar" className="rounded-lg p-1 text-zinc-400 hover:bg-raised hover:text-zinc-100">
+        <h2 className="flex-1 text-lg font-semibold">Inspector</h2>
+        <button onClick={onClose} aria-label="Cerrar" className="rounded-lg p-1 text-accent hover:bg-raised">
           <IconClose />
         </button>
       </div>
 
-      <div className="aspect-video overflow-hidden rounded-xl bg-black">
+      <div className="overflow-hidden rounded-xl bg-black">
         {m.kind === "video" ? (
-          <video src={m.url} controls playsInline preload="metadata" className="h-full w-full object-contain" />
+          <video src={m.url} controls playsInline preload="metadata" className="max-h-72 w-full object-contain" />
         ) : (
           // eslint-disable-next-line @next/next/no-img-element
-          <img src={m.url} alt={m.originalName} className="h-full w-full object-contain" />
+          <img src={m.url} alt={m.originalName} className="max-h-72 w-full object-contain" />
         )}
       </div>
 
-      <div className="space-y-1">
-        <span className="text-xs font-semibold uppercase tracking-wide text-zinc-500">Nombre</span>
-        <p className="break-all font-medium">{m.originalName}</p>
+      <div className="space-y-4 rounded-xl bg-raised/60 p-4">
+        <h3 className="font-semibold">Medios</h3>
+        <a href={m.url} target="_blank" rel="noreferrer" className="block break-all rounded-lg bg-raised px-4 py-3 text-sm text-accent hover:underline">
+          {m.originalName}
+        </a>
+        <dl className="space-y-3 border-t border-line pt-4 text-sm">
+          {rows.map(([label, value]) => (
+            <div key={label} className="flex items-start justify-between gap-4">
+              <dt className="text-zinc-200">{label}</dt>
+              <dd className="break-all text-right tabular-nums text-zinc-300">{value}</dd>
+            </div>
+          ))}
+        </dl>
       </div>
-
-      <dl className="divide-y divide-line text-sm">
-        {rows.map(([label, value]) => (
-          <div key={label} className="flex items-start justify-between gap-4 py-2.5">
-            <dt className="text-zinc-400">{label}</dt>
-            <dd className="break-all text-right tabular-nums text-zinc-200">{value}</dd>
-          </div>
-        ))}
-      </dl>
     </aside>
   );
 }

@@ -14,7 +14,7 @@ export async function PATCH(req: Request, { params }: Ctx) {
   if (!current) return error("Bloque no encontrado", 404);
   const checked = await checkSchedule((await req.json()) as ScheduleBody, current);
   if ("error" in checked) return error(checked.error);
-  const conflict = await findConflict(checked.values, { id, validFrom: current.validFrom, validUntil: current.validUntil });
+  const conflict = await findConflict(checked.values, { id });
   if (conflict) return error(conflict, 409);
   await saveSchedule(checked.values, id);
   await refreshAll();
