@@ -1,9 +1,10 @@
 import type { WebSocket } from "ws";
-import { eq } from "drizzle-orm";
+import { and, eq, isNull, ne, or } from "drizzle-orm";
 import { db } from "@/db";
 import { devices } from "@/db/schema";
 import { resolvePlayback } from "./playback";
-import type { ServerMessage } from "./protocol";
+
+import type { ClientMessage, ServerMessage } from "./protocol";
 
 /**
  * Estado en memoria de las conexiones de pantallas.
@@ -43,7 +44,21 @@ export function takePendingSocket(code: string) {
   return p.ws;
 }
 
+const screens = new WeakMap<WebSocket, { w: unknown; h: unknown }>();
+/** Recuerda la resolución del hello (sirve para pantallas que todavía no están vinculadas). */
+export function rememberScreen(ws: WebSocket, w: unknown, h: unknown) {
+  screens.set(ws, { w, h });
+}
+
 export function attachDevice(deviceId: string, ws: WebSocket) {
+  const scr = screens.get(ws);
+  if (scr) void recordScreen(deviceId, scr.w, scr.h);
+  ws.on("message", (data) => {
+    try {
+      const m = JSON.parse(data.toString()) as ClientMessage;
+      if (m.type === "screen") void recordScreen(deviceId, m.width, m.height);
+    } catch {}
+  });
   let set = hub.devices.get(deviceId);
   if (!set) hub.devices.set(deviceId, (set = new Set()));
   set.add(ws);
@@ -53,6 +68,16 @@ export function attachDevice(deviceId: string, ws: WebSocket) {
     void db.update(devices).set({ lastSeenAt: new Date() }).where(eq(devices.id, deviceId));
   });
   void db.update(devices).set({ lastSeenAt: new Date() }).where(eq(devices.id, deviceId));
+}
+
+/** Guarda la resolución que reporta el reproductor (solo si cambió). */
+export async function recordScreen(deviceId: string, width: unknown, height: unknown) {
+  const w = Number(width), h = Number(height);
+  if (!Number.isInteger(w) || !Number.isInteger(h) || w < 100 || h < 100 || w > 20000 || h > 20000) return;
+  await db
+    .update(devices)
+    .set({ screenWidth: w, screenHeight: h })
+    .where(and(eq(devices.id, deviceId), or(isNull(devices.screenWidth), ne(devices.screenWidth, w), isNull(devices.screenHeight), ne(devices.screenHeight, h))));
 }
 
 export function isOnline(deviceId: string) {

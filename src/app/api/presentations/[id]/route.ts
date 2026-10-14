@@ -14,16 +14,23 @@ export async function GET(_req: Request, { params }: Ctx) {
   const items = await db
     .select({ item: presentationItems, asset: mediaAssets })
     .from(presentationItems)
-    .innerJoin(mediaAssets, eq(presentationItems.mediaAssetId, mediaAssets.id))
+    .leftJoin(mediaAssets, eq(presentationItems.mediaAssetId, mediaAssets.id))
     .where(eq(presentationItems.presentationId, id))
     .orderBy(asc(presentationItems.position));
   return json({
     ...presentation,
-    items: items.map(({ item, asset }) => ({
-      mediaAssetId: asset.id,
-      durationSeconds: item.durationSeconds,
-      asset: { ...asset, url: publicUrl(asset.objectKey), thumbnailUrl: asset.thumbnailKey ? publicUrl(asset.thumbnailKey) : null },
-    })),
+    /** Lista plana en orden. Un elemento con type "section" es un encabezado que agrupa los siguientes. */
+    items: items.map(({ item, asset }) =>
+      asset
+        ? {
+            type: "media" as const,
+            mediaAssetId: asset.id,
+            durationSeconds: item.durationSeconds,
+            fit: item.fit,
+            asset: { ...asset, url: publicUrl(asset.objectKey), thumbnailUrl: asset.thumbnailKey ? publicUrl(asset.thumbnailKey) : null },
+          }
+        : { type: "section" as const, name: item.sectionName ?? "Sección" },
+    ),
   });
 }
 
@@ -33,23 +40,39 @@ export async function PUT(req: Request, { params }: Ctx) {
   const body = (await req.json()) as {
     name: string;
     description?: string | null;
-    items: { mediaAssetId: string; durationSeconds: number | null }[];
+    orientation?: string;
+    transition?: string;
+    items: ({ type?: "media"; mediaAssetId: string; durationSeconds: number | null; fit?: string } | { type: "section"; name: string })[];
   };
   if (!body.name?.trim()) return error("Falta el nombre");
+  if (body.orientation !== undefined && body.orientation !== "landscape" && body.orientation !== "portrait") return error("Orientación inválida");
+  if (body.transition !== undefined && body.transition !== "cut" && body.transition !== "dissolve") return error("Transición inválida");
+  if (!Array.isArray(body.items)) return error("Faltan los elementos");
   await db.transaction(async (tx) => {
     await tx
       .update(presentations)
-      .set({ name: body.name.trim(), description: body.description?.trim() || null, updatedAt: new Date() })
+      .set({
+        name: body.name.trim(),
+        description: body.description?.trim() || null,
+        ...(body.orientation ? { orientation: body.orientation as "landscape" | "portrait" } : {}),
+        ...(body.transition ? { transition: body.transition as "cut" | "dissolve" } : {}),
+        updatedAt: new Date(),
+      })
       .where(eq(presentations.id, id));
     await tx.delete(presentationItems).where(eq(presentationItems.presentationId, id));
     if (body.items.length) {
       await tx.insert(presentationItems).values(
-        body.items.map((it, position) => ({
-          presentationId: id,
-          mediaAssetId: it.mediaAssetId,
-          position,
-          durationSeconds: it.durationSeconds && it.durationSeconds > 0 ? Math.round(it.durationSeconds) : null,
-        })),
+        body.items.map((it, position) =>
+          it.type === "section"
+            ? { presentationId: id, mediaAssetId: null, sectionName: it.name?.trim() || "Sección", position, durationSeconds: null }
+            : {
+                presentationId: id,
+                mediaAssetId: it.mediaAssetId,
+                position,
+                fit: it.fit === "cover" ? "cover" : "contain",
+                durationSeconds: it.durationSeconds && it.durationSeconds > 0 ? Math.round(it.durationSeconds) : null,
+              },
+        ),
       );
     }
   });

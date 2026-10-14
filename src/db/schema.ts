@@ -15,6 +15,8 @@ import {
 } from "drizzle-orm/pg-core";
 
 export const mediaKind = pgEnum("media_kind", ["image", "video"]);
+export const orientation = pgEnum("orientation", ["landscape", "portrait"]);
+export const transitionKind = pgEnum("transition_kind", ["cut", "dissolve"]);
 export const userRole = pgEnum("user_role", ["admin", "operator"]);
 
 /** Carpetas / colecciones virtuales para organizar medios. */
@@ -36,6 +38,9 @@ export const mediaAssets = pgTable("media_assets", {
   thumbnailKey: text("thumbnail_key"),
   /** Duración en segundos (solo videos), medida en el navegador al subir. */
   durationSeconds: integer("duration_seconds"),
+  /** Resolución en píxeles, medida en el navegador al subir. */
+  width: integer("width"),
+  height: integer("height"),
   folderId: uuid("folder_id").references(() => mediaFolders.id, { onDelete: "set null" }),
   uploadedAt: timestamp("uploaded_at", { withTimezone: true }).notNull().defaultNow(),
 });
@@ -45,6 +50,9 @@ export const presentations = pgTable("presentations", {
   id: uuid("id").primaryKey().defaultRandom(),
   name: text("name").notNull(),
   description: text("description"),
+  /** Orientación de pantalla para la que se diseñó la presentación. */
+  orientation: orientation("orientation").notNull().default("landscape"),
+  transition: transitionKind("transition").notNull().default("cut"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
@@ -57,9 +65,11 @@ export const presentationItems = pgTable(
     presentationId: uuid("presentation_id")
       .notNull()
       .references(() => presentations.id, { onDelete: "cascade" }),
-    mediaAssetId: uuid("media_asset_id")
-      .notNull()
-      .references(() => mediaAssets.id, { onDelete: "cascade" }),
+    /** null = encabezado de sección (agrupa los elementos que le siguen). */
+    mediaAssetId: uuid("media_asset_id").references(() => mediaAssets.id, { onDelete: "cascade" }),
+    sectionName: text("section_name"),
+    /** Cómo se ajusta a la pantalla: "contain" (entero) o "cover" (llena y recorta). */
+    fit: text("fit").notNull().default("contain"),
     position: integer("position").notNull(),
     /** Duración para imágenes. Los videos usan su duración real si es null. */
     durationSeconds: integer("duration_seconds"),
@@ -86,6 +96,11 @@ export const devices = pgTable("devices", {
   defaultPresentationId: uuid("default_presentation_id").references(() => presentations.id, {
     onDelete: "set null",
   }),
+  /** Resolución reportada por el reproductor (en píxeles CSS, ya con la rotación aplicada). */
+  screenWidth: integer("screen_width"),
+  screenHeight: integer("screen_height"),
+  /** Giro en grados (0/90/180/270) para TVs montados al revés o en vertical sin opción en el TV. */
+  rotation: smallint("rotation").notNull().default(0),
   lastSeenAt: timestamp("last_seen_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
@@ -150,3 +165,17 @@ export const sessions = pgTable("sessions", {
 });
 
 export type User = typeof users.$inferSelect;
+
+/** Etiquetas del panel (las pantallas guardan el nombre en devices.tags). */
+export const tags = pgTable("tags", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  name: text("name").notNull().unique(),
+  description: text("description"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+/** Ajustes globales clave/valor: timezone, defaultBackgroundId, sharePreviewLinks. */
+export const settings = pgTable("settings", {
+  key: text("key").primaryKey(),
+  value: text("value").notNull(),
+});

@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { IconCalendar, IconDevices, IconMedia, IconPresentations, IconUsers } from "./Icons";
+import { IconCalendar, IconDevices, IconMedia, IconPresentations, IconSettings, IconUsers } from "./Icons";
 import { useMe } from "./Session";
 
 const baseNav = [
@@ -31,6 +31,14 @@ export default function Sidebar() {
           </Link>
         );
       })}
+      {me?.role === "admin" && (
+        <Link href="/dashboard/settings" className="group mt-auto flex w-full flex-col items-center gap-1.5 px-1 text-[11px] font-medium">
+          <span className={`flex h-10 w-10 items-center justify-center rounded-lg transition-colors ${path.startsWith("/dashboard/settings") ? "bg-accent/20 text-accent" : "text-zinc-400 group-hover:bg-white/5"}`}>
+            <IconSettings />
+          </span>
+          <span className={path.startsWith("/dashboard/settings") ? "text-zinc-100" : "text-zinc-400"}>Ajustes</span>
+        </Link>
+      )}
     </nav>
   );
 }

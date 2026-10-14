@@ -15,6 +15,13 @@
       "when": 1792011492768,
       "tag": "0001_features",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1792015359721,
+      "tag": "0002_prodisplay",
+      "breakpoints": true
     }
   ]
 }

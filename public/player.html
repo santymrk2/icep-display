@@ -8,7 +8,12 @@
   html, body { margin: 0; padding: 0; width: 100%; height: 100%; background: #000; overflow: hidden; cursor: none; }
   body { font-family: Arial, Helvetica, sans-serif; color: #fff; }
   #stage { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: #000; }
+  #stage { -webkit-transform-origin: 0 0; transform-origin: 0 0; }
   .media { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: contain; background: #000; }
+  .media.cover { object-fit: cover; }
+  .media.fade { opacity: 0; -webkit-transition: opacity 0.8s ease; transition: opacity 0.8s ease; }
+  .media.fade.in { opacity: 1; }
+  .bg { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: #000 center center no-repeat; background-size: cover; }
   #msg { position: absolute; top: 0; left: 0; width: 100%; height: 100%; text-align: center; display: none; }
   #msg .inner { position: absolute; top: 50%; left: 0; width: 100%; margin-top: -14vw; }
   #msg .small { font-size: 3vw; color: #a1a1aa; }
@@ -46,11 +51,16 @@
 
   /* ---------- Última lista de reproducción (para arrancar sin red) ---------- */
   var PLAY_KEY = 'carteleria.lastplay';
-  function saveLastPlay(items) {
-    try { window.localStorage.setItem(PLAY_KEY, JSON.stringify(items)); } catch (e) {}
+  function saveLastPlay(msg) {
+    try { window.localStorage.setItem(PLAY_KEY, JSON.stringify(msg)); } catch (e) {}
   }
   function loadLastPlay() {
-    try { var t = window.localStorage.getItem(PLAY_KEY); return t ? JSON.parse(t) : null; } catch (e) { return null; }
+    try {
+      var t = window.localStorage.getItem(PLAY_KEY);
+      var v = t ? JSON.parse(t) : null;
+      if (v && v.length !== undefined) v = { items: v }; // formato viejo: solo la lista
+      return v;
+    } catch (e) { return null; }
   }
   function clearLastPlay() {
     try { window.localStorage.removeItem(PLAY_KEY); } catch (e) {}
@@ -64,6 +74,39 @@
     msgBox.style.display = 'block';
   }
   function hideMessage() { msgBox.style.display = 'none'; }
+
+  /* ---------- Giro y tamaño de pantalla ---------- */
+  var rotation = 0;
+  var dissolve = false;
+  var lastReport = '';
+
+  function applyLayout() {
+    var W = window.innerWidth || document.documentElement.clientWidth;
+    var H = window.innerHeight || document.documentElement.clientHeight;
+    var st = stage.style;
+    var t = '';
+    var w = W, h = H;
+    if (rotation === 180) { t = 'rotate(180deg) translate(' + (-W) + 'px,' + (-H) + 'px)'; }
+    else if (rotation === 90) { w = H; h = W; t = 'translate(' + W + 'px,0) rotate(90deg)'; }
+    else if (rotation === 270) { w = H; h = W; t = 'translate(0,' + H + 'px) rotate(-90deg)'; }
+    st.width = w + 'px'; st.height = h + 'px';
+    st.webkitTransform = t; st.transform = t;
+  }
+
+  /* Informa la resolución (en píxeles CSS) para que el panel sepa si es horizontal o vertical. */
+  function screenSize() {
+    return { width: window.innerWidth || document.documentElement.clientWidth, height: window.innerHeight || document.documentElement.clientHeight };
+  }
+  function reportScreen() {
+    var s = screenSize();
+    var key = s.width + 'x' + s.height;
+    if (key === lastReport) return;
+    lastReport = key;
+    if (ws && ws.readyState === 1) { try { ws.send(JSON.stringify({ type: 'screen', width: s.width, height: s.height })); } catch (e) {} }
+  }
+  window.addEventListener('resize', function () { applyLayout(); reportScreen(); });
+  window.addEventListener('orientationchange', function () { setTimeout(function () { applyLayout(); reportScreen(); }, 300); });
+  applyLayout();
 
   /* ---------- Reproducción ---------- */
   var playlist = [];
@@ -85,18 +128,39 @@
   function samePlaylist(a, b) {
     if (a.length !== b.length) return false;
     for (var i = 0; i < a.length; i++) {
-      if (a[i].id !== b[i].id || a[i].url !== b[i].url || a[i].durationSeconds !== b[i].durationSeconds) return false;
+      if (a[i].id !== b[i].id || a[i].url !== b[i].url || a[i].durationSeconds !== b[i].durationSeconds || a[i].fit !== b[i].fit) return false;
     }
     return true;
   }
 
-  function setPlaylist(items) {
-    if (samePlaylist(items, playlist) && currentEl) return; // sin cambios: no reiniciar
+  var background = null;
+  function showBackground() {
+    clearStage();
+    if (!background) return;
+    var d = document.createElement('div');
+    d.className = 'bg';
+    d.style.backgroundImage = 'url("' + background + '")';
+    stage.appendChild(d);
+    currentEl = d;
+  }
+
+  /* msg: { items, rotation, transition, background } */
+  function setPlaylist(msg) {
+    var items = msg.items || [];
+    var nextRotation = msg.rotation || 0;
+    var nextBg = msg.background || null;
+    var layoutChanged = nextRotation !== rotation;
+    rotation = nextRotation;
+    dissolve = msg.transition === 'dissolve';
+    if (layoutChanged) applyLayout();
+    var bgChanged = nextBg !== background;
+    background = nextBg;
+    if (samePlaylist(items, playlist) && currentEl && !(bgChanged && !items.length)) return; // sin cambios: no reiniciar
     generation++;
     playlist = items;
     index = 0;
     clearStage();
-    if (!items.length) return;
+    if (!items.length) { hideMessage(); showBackground(); return; }
     hideMessage();
     playCurrent();
   }
@@ -119,12 +183,12 @@
 
     if (item.kind === 'image') {
       el = document.createElement('img');
-      el.className = 'media';
+      el.className = 'media' + (item.fit === 'cover' ? ' cover' : '');
       el.onerror = function () { currentTimer = setTimeout(function () { advance(gen); }, 2000); };
       el.src = item.url;
     } else {
       el = document.createElement('video');
-      el.className = 'media';
+      el.className = 'media' + (item.fit === 'cover' ? ' cover' : '');
       el.muted = true;
       el.defaultMuted = true;
       el.setAttribute('muted', '');
@@ -143,11 +207,22 @@
 
     // Reemplazo sin parpadeo: se agrega el nuevo elemento y luego se quita el anterior.
     var old = currentEl;
+    var fade = dissolve && old && playlist.length > 1;
+    if (fade) el.className += ' fade';
     stage.appendChild(el);
     currentEl = el;
-    if (old && old.parentNode === stage) {
-      if (old.tagName === 'VIDEO') { try { old.pause(); old.removeAttribute('src'); old.load(); } catch (e) {} }
-      stage.removeChild(old);
+    function dropOld() {
+      if (old && old.parentNode === stage) {
+        if (old.tagName === 'VIDEO') { try { old.pause(); old.removeAttribute('src'); old.load(); } catch (e) {} }
+        stage.removeChild(old);
+      }
+    }
+    if (fade) {
+      // Disuelve: el nuevo aparece encima del anterior; el anterior se quita al terminar.
+      setTimeout(function () { el.className += ' in'; }, 30);
+      setTimeout(dropOld, 900);
+    } else {
+      dropOld();
     }
 
     if (item.kind === 'image') {
@@ -184,7 +259,7 @@
     var msg;
     try { msg = JSON.parse(ev.data); } catch (e) { return; }
     if (msg.type === 'pairing') {
-      generation++; playlist = []; clearStage();
+      generation++; playlist = []; clearStage(); rotation = 0; applyLayout();
       showMessage('Código de vinculación', msg.code, 'Ingresalo en el panel, en Pantallas');
     } else if (msg.type === 'paired') {
       writeToken(msg.token);
@@ -192,8 +267,8 @@
       writeToken(null);
       clearLastPlay();
     } else if (msg.type === 'play') {
-      saveLastPlay(msg.items || []);
-      setPlaylist(msg.items || []);
+      saveLastPlay(msg);
+      setPlaylist(msg);
     } else if (msg.type === 'reload') {
       location.reload();
     }
@@ -210,7 +285,9 @@
     ws.onopen = function () {
       retryMs = 1000;
       statusDot.style.display = 'none';
-      ws.send(JSON.stringify({ type: 'hello', token: readToken() }));
+      var sz = screenSize();
+      lastReport = sz.width + 'x' + sz.height;
+      ws.send(JSON.stringify({ type: 'hello', token: readToken(), width: sz.width, height: sz.height }));
     };
     ws.onmessage = onMessage;
     ws.onclose = function () {
@@ -225,7 +302,7 @@
   // Si el TV arranca sin red, se muestra lo último que se reprodujo (las imágenes y videos
   // salen de la caché del navegador si ya se vieron; si no, se omiten y se reintenta).
   var cached = readToken() ? loadLastPlay() : null;
-  if (cached && cached.length) { setPlaylist(cached); } else { showMessage('Conectando…', '', ''); }
+  if (cached && cached.items && cached.items.length) { setPlaylist(cached); } else { showMessage('Conectando…', '', ''); }
   connect();
 
   /* Pantalla completa con un toque / OK del control (donde esté permitido). */

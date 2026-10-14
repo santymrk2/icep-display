@@ -10,7 +10,7 @@ import { db } from "@/db";
 import { devices } from "@/db/schema";
 import { BUCKET, ensureBucket, minioHost, minioPort } from "@/lib/storage";
 import { cookieValue, ensureAdmin, operatorMayCall, userFromToken } from "@/lib/auth";
-import { attachDevice, createPairingCode, refreshAll, refreshDevice, send } from "@/lib/hub";
+import { attachDevice, createPairingCode, rememberScreen, refreshAll, refreshDevice, send } from "@/lib/hub";
 import type { ClientMessage } from "@/lib/protocol";
 
 const dev = process.env.NODE_ENV !== "production";
@@ -101,6 +101,7 @@ function handleSocket(ws: WebSocket) {
     }
     if (msg.type !== "hello") return ws.close();
 
+    rememberScreen(ws, msg.width, msg.height);
     if (msg.token) {
       const [device] = await db.select().from(devices).where(eq(devices.connectionToken, msg.token));
       if (device) {

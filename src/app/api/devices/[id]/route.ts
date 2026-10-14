@@ -32,6 +32,7 @@ export async function PATCH(req: Request, { params }: Ctx) {
     defaultPresentationId?: string | null;
     tags?: unknown;
     groupId?: string | null;
+    rotation?: number;
   };
   const patch: Partial<typeof devices.$inferInsert> = {};
   if (body.name !== undefined) {
@@ -40,6 +41,10 @@ export async function PATCH(req: Request, { params }: Ctx) {
   }
   if (body.location !== undefined) patch.location = body.location?.trim() || null;
   if (body.defaultPresentationId !== undefined) patch.defaultPresentationId = body.defaultPresentationId;
+  if (body.rotation !== undefined) {
+    if (![0, 90, 180, 270].includes(body.rotation)) return error("El giro debe ser 0, 90, 180 o 270");
+    patch.rotation = body.rotation;
+  }
   if (body.tags !== undefined) {
     if (!Array.isArray(body.tags)) return error("Las etiquetas deben ser una lista");
     const tags = normalizeTags(body.tags);
