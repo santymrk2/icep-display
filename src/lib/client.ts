@@ -37,6 +37,18 @@ export type PresentationDTO = {
   itemCount: number;
 };
 
+export type ScheduleDTO = {
+  id: string;
+  name: string;
+  presentationId: string;
+  deviceId: string | null;
+  groupId: string | null;
+  daysOfWeek: number;
+  startTime: string;
+  endTime: string;
+  enabled: boolean;
+};
+
 export function formatBytes(n: number) {
   const units = ["B", "KB", "MB", "GB"];
   let i = 0;
