@@ -18,7 +18,14 @@ export type MediaDTO = {
   kind: "image" | "video";
   mimeType: string;
   sizeBytes: number;
+  folderId: string | null;
   uploadedAt: string;
+};
+
+export type FolderDTO = {
+  id: string;
+  name: string;
+  createdAt: string;
 };
 
 export type DeviceDTO = {

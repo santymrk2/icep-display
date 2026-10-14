@@ -1,11 +1,41 @@
 import { eq } from "drizzle-orm";
 import { db } from "@/db";
-import { mediaAssets } from "@/db/schema";
+import { mediaAssets, mediaFolders } from "@/db/schema";
 import { refreshAll } from "@/lib/hub";
 import { error, json } from "@/lib/http";
-import { BUCKET, minio } from "@/lib/storage";
+import { BUCKET, minio, publicUrl } from "@/lib/storage";
 
-export async function DELETE(_req: Request, { params }: { params: Promise<{ id: string }> }) {
+type Ctx = { params: Promise<{ id: string }> };
+
+/** Renombra (name) y/o mueve (folderId; null = raíz) un archivo. */
+export async function PATCH(req: Request, { params }: Ctx) {
+  const { id } = await params;
+  const body = (await req.json().catch(() => ({}))) as { name?: string; folderId?: string | null };
+  const patch: Partial<typeof mediaAssets.$inferInsert> = {};
+
+  if (body.name !== undefined) {
+    const name = body.name.trim();
+    if (!name) return error("El nombre no puede quedar vacío");
+    patch.originalName = name;
+  }
+  if (body.folderId !== undefined) {
+    if (body.folderId !== null) {
+      const [folder] = await db
+        .select({ id: mediaFolders.id })
+        .from(mediaFolders)
+        .where(eq(mediaFolders.id, body.folderId));
+      if (!folder) return error("Carpeta no encontrada");
+    }
+    patch.folderId = body.folderId;
+  }
+  if (Object.keys(patch).length === 0) return error("Nada para actualizar");
+
+  const [asset] = await db.update(mediaAssets).set(patch).where(eq(mediaAssets.id, id)).returning();
+  if (!asset) return error("Archivo no encontrado", 404);
+  return json({ ...asset, url: publicUrl(asset.objectKey) });
+}
+
+export async function DELETE(_req: Request, { params }: Ctx) {
   const { id } = await params;
   const [asset] = await db.delete(mediaAssets).where(eq(mediaAssets.id, id)).returning();
   if (!asset) return error("Archivo no encontrado", 404);
