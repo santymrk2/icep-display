@@ -1,5 +1,4 @@
 import Sidebar from "@/components/Sidebar";
-import GettingStarted from "@/components/GettingStarted";
 import { HeaderUser } from "@/components/Session";
 
 /**
@@ -26,7 +25,6 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           </footer>
         </div>
       </div>
-      <GettingStarted />
     </div>
   );
 }

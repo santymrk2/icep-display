@@ -15,8 +15,9 @@ export default function GettingStarted() {
   const [open, setOpen] = useState(false);
   return (
     <>
-      <button className="fixed bottom-14 right-6 z-30 rounded-lg border border-teal-400/60 bg-canvas px-4 py-2.5 text-sm font-semibold shadow-lg hover:bg-teal-400/10" onClick={() => setOpen(true)}>
-        Primeros pasos
+      <button className="group flex w-full flex-col items-center gap-1.5 px-1 text-[11px] font-medium" onClick={() => setOpen(true)}>
+        <span className="flex h-10 w-10 items-center justify-center rounded-lg border border-teal-400/50 text-base font-semibold text-teal-300 transition-colors group-hover:bg-teal-400/10">?</span>
+        <span className="text-zinc-400">Primeros pasos</span>
       </button>
       {open && (
         <div className="modal-backdrop" onClick={() => setOpen(false)}>
