@@ -7,21 +7,71 @@
 }
 
 body {
-  @apply bg-zinc-950 text-zinc-100 antialiased;
+  @apply bg-canvas text-zinc-100 antialiased;
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
 }
 
+@layer components {
 .btn {
-  @apply inline-flex items-center justify-center gap-2 rounded-md bg-zinc-800 px-3 py-1.5 text-sm font-medium hover:bg-zinc-700 disabled:opacity-50;
+  @apply inline-flex items-center justify-center gap-2 rounded-lg bg-raised px-4 py-2 text-sm font-medium hover:bg-line disabled:opacity-50;
 }
 .btn-primary {
-  @apply btn bg-indigo-600 hover:bg-indigo-500;
+  @apply btn bg-accent text-white hover:bg-accent/85;
+}
+.btn-outline {
+  @apply btn border border-accent bg-transparent text-accent hover:bg-accent/10;
 }
 .btn-danger {
   @apply btn bg-red-700/80 hover:bg-red-600;
 }
 .input {
-  @apply rounded-md border border-zinc-700 bg-zinc-900 px-3 py-1.5 text-sm outline-none focus:border-indigo-500;
+  @apply rounded-lg border border-line bg-panel px-3 py-2 text-sm outline-none placeholder:text-zinc-500 focus:border-accent;
 }
 .card {
-  @apply rounded-lg border border-zinc-800 bg-zinc-900/60;
+  @apply rounded-xl border border-line bg-panel;
+}
+/* Tabla estilo ProDisplay: caja con borde, encabezado más claro. */
+.table-shell {
+  @apply overflow-hidden rounded-xl border border-line;
+}
+.table-shell table {
+  @apply w-full text-left text-sm;
+}
+.table-shell thead {
+  @apply bg-panel text-[13px] font-semibold text-zinc-200;
+}
+.table-shell th,
+.table-shell td {
+  @apply px-4 py-3;
+}
+.table-shell tbody tr {
+  @apply border-t border-line;
+}
+.table-shell tbody tr.row-click:hover {
+  @apply cursor-pointer bg-white/[0.03];
+}
+.pill {
+  @apply inline-flex items-center gap-2 rounded-full bg-raised px-3 py-1 text-xs font-medium text-zinc-300;
+}
+.pill-ok {
+  @apply bg-emerald-500/15 text-emerald-400;
+}
+.pill-warn {
+  @apply border border-amber-500/60 bg-transparent text-amber-400;
+}
+.dot {
+  @apply h-2 w-2 rounded-full bg-zinc-500;
+}
+.dot-ok {
+  @apply bg-emerald-400;
+}
+.modal-backdrop {
+  @apply fixed inset-0 z-40 flex items-center justify-center bg-black/60 p-4;
+}
+.modal {
+  @apply w-full max-w-md rounded-2xl border border-line bg-panel shadow-2xl;
+}
+.drawer {
+  @apply fixed right-0 top-16 z-30 h-[calc(100vh-4rem)] w-full max-w-sm overflow-auto border-l border-line bg-panel p-5 shadow-2xl;
+}
 }
