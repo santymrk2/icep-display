@@ -18,6 +18,8 @@ Las migraciones y el bucket de MinIO se crean solos al arrancar.
 > Con WSL2 hay que permitir el puerto 3000 en el firewall de Windows y que WSL sea accesible desde la LAN
 > (modo de red `mirrored` en `.wslconfig`, o `netsh interface portproxy`). Esto hay que probarlo en la máquina real.
 
+> **Sobre la imagen de MinIO:** `minio/minio` ya no existe en Docker Hub. El compose usa `bitnamilegacy/minio` fijada en la versión 2025.7.23 (una build real de MinIO, pero congelada: no recibe actualizaciones de seguridad). Como MinIO no se publica fuera de Docker, el riesgo en una red local es bajo. Para migrar más adelante a otro almacenamiento compatible con S3 alcanza con cambiar la imagen y las variables en `docker-compose.yml`; el código solo usa la API S3.
+
 ## Desarrollo
 
 ```bash

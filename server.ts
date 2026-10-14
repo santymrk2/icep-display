@@ -116,7 +116,17 @@ function handleSocket(ws: WebSocket) {
 
 async function main() {
   await runMigrations();
-  await ensureBucket();
+  // MinIO puede tardar unos segundos en aceptar conexiones después de arrancar.
+  for (let attempt = 1; ; attempt++) {
+    try {
+      await ensureBucket();
+      break;
+    } catch (err) {
+      if (attempt >= 30) throw err;
+      console.log(`> Esperando a MinIO (${attempt}/30)…`);
+      await new Promise((r) => setTimeout(r, 2000));
+    }
+  }
   await ensureAdmin();
   await app.prepare();
 
