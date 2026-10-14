@@ -1,21 +1,38 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
-import { api, type DeviceDTO, type PresentationDTO } from "@/lib/client";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { api, type DeviceDTO, type GroupDTO, type PresentationDTO } from "@/lib/client";
 import { IconClose, IconDevices, IconPlus, IconSearch } from "@/components/Icons";
 
 const CODE_LENGTH = 4;
+const MAX_TAGS = 10;
+const MAX_TAG_LENGTH = 24;
+/** Valor del select de grupo para "pantallas sin grupo". */
+const NO_GROUP = "none";
+
+type StatusFilter = "all" | "online" | "offline";
 
 export default function DevicesPage() {
   const [devices, setDevices] = useState<DeviceDTO[]>([]);
   const [presentations, setPresentations] = useState<PresentationDTO[]>([]);
+  const [groups, setGroups] = useState<GroupDTO[]>([]);
   const [query, setQuery] = useState("");
+  const [status, setStatus] = useState<StatusFilter>("all");
+  const [groupFilter, setGroupFilter] = useState("");
+  const [tagFilter, setTagFilter] = useState<string[]>([]);
+  const [filtersOpen, setFiltersOpen] = useState(false);
   const [pairing, setPairing] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const filtersRef = useRef<HTMLDivElement>(null);
 
   const load = useCallback(async () => {
-    setDevices(await api<DeviceDTO[]>("/api/devices"));
+    const [list, groupList] = await Promise.all([
+      api<DeviceDTO[]>("/api/devices"),
+      api<GroupDTO[]>("/api/groups").catch(() => null),
+    ]);
+    setDevices(list);
+    if (groupList) setGroups(groupList);
   }, []);
 
   useEffect(() => {
@@ -25,13 +42,57 @@ export default function DevicesPage() {
     return () => clearInterval(t);
   }, [load]);
 
-  const q = query.trim().toLowerCase();
-  const visible = devices.filter(
-    (d) => !q || d.name.toLowerCase().includes(q) || (d.location ?? "").toLowerCase().includes(q),
+  // Cerrar el panel de filtros con clic afuera o Escape.
+  useEffect(() => {
+    if (!filtersOpen) return;
+    const onDown = (e: MouseEvent) => {
+      if (!filtersRef.current?.contains(e.target as Node)) setFiltersOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setFiltersOpen(false);
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [filtersOpen]);
+
+  const allTags = useMemo(
+    () => [...new Set(devices.flatMap((d) => d.tags))].sort((a, b) => a.localeCompare(b, "es")),
+    [devices],
   );
+  const groupName = useMemo(() => new Map(groups.map((g) => [g.id, g.name])), [groups]);
+
+  const q = query.trim().toLowerCase();
+  const activeFilters = (status !== "all" ? 1 : 0) + (groupFilter ? 1 : 0) + tagFilter.length;
+  const filtersActive = activeFilters > 0;
+  const visible = devices.filter((d) => {
+    if (status === "online" && !d.online) return false;
+    if (status === "offline" && d.online) return false;
+    if (groupFilter === NO_GROUP && d.groupId) return false;
+    if (groupFilter && groupFilter !== NO_GROUP && d.groupId !== groupFilter) return false;
+    if (!tagFilter.every((t) => d.tags.includes(t))) return false;
+    if (!q) return true;
+    return (
+      d.name.toLowerCase().includes(q) ||
+      (d.location ?? "").toLowerCase().includes(q) ||
+      d.tags.some((t) => t.includes(q))
+    );
+  });
   const selected = devices.find((d) => d.id === selectedId) ?? null;
   const presentationName = (id: string | null) => presentations.find((p) => p.id === id)?.name;
   const closePairing = useCallback(() => setPairing(false), []);
+  const deviceWord = devices.length === 1 ? "pantalla" : "pantallas";
+
+  function clearFilters() {
+    setStatus("all");
+    setGroupFilter("");
+    setTagFilter([]);
+  }
+
+  function toggleTag(tag: string) {
+    setTagFilter((prev) => (prev.includes(tag) ? prev.filter((t) => t !== tag) : [...prev, tag]));
+  }
 
   return (
     <div className="space-y-6">
@@ -42,14 +103,95 @@ export default function DevicesPage() {
           <IconSearch className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500" />
           <input
             className="input w-full pl-9"
-            placeholder="Buscar por nombre o ubicación..."
+            placeholder="Buscar por nombre, ubicación o etiqueta..."
             value={query}
             onChange={(e) => setQuery(e.target.value)}
           />
         </div>
+        <div ref={filtersRef} className="relative flex items-center gap-3">
+          <button
+            type="button"
+            className="btn"
+            aria-expanded={filtersOpen}
+            onClick={() => setFiltersOpen((o) => !o)}
+          >
+            Filtros
+            {filtersActive && (
+              <span className="rounded-full bg-accent px-1.5 text-[11px] font-semibold leading-5 text-white">
+                {activeFilters}
+              </span>
+            )}
+          </button>
+          {filtersActive && (
+            <button type="button" className="text-sm text-accent underline-offset-4 hover:underline" onClick={clearFilters}>
+              Limpiar
+            </button>
+          )}
+          {filtersOpen && (
+            <div
+              role="dialog"
+              aria-label="Filtros de pantallas"
+              className="absolute right-0 top-full z-20 mt-2 w-72 space-y-5 rounded-xl border border-line bg-panel p-4 shadow-2xl"
+            >
+              <div className="space-y-2">
+                <span className="text-sm font-medium">Estado</span>
+                <div className="flex flex-wrap gap-2">
+                  {(
+                    [
+                      ["all", "Todas"],
+                      ["online", "Online"],
+                      ["offline", "Offline"],
+                    ] as const
+                  ).map(([value, label]) => (
+                    <button
+                      key={value}
+                      type="button"
+                      aria-pressed={status === value}
+                      className={chipClass(status === value)}
+                      onClick={() => setStatus(value)}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <label className="block space-y-2">
+                <span className="text-sm font-medium">Grupo</span>
+                <select className="input w-full" value={groupFilter} onChange={(e) => setGroupFilter(e.target.value)}>
+                  <option value="">Todos los grupos</option>
+                  <option value={NO_GROUP}>Sin grupo</option>
+                  {groups.map((g) => (
+                    <option key={g.id} value={g.id}>
+                      {g.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <div className="space-y-2">
+                <span className="text-sm font-medium">Etiquetas</span>
+                {allTags.length === 0 ? (
+                  <p className="text-xs text-zinc-500">Todavía no hay etiquetas</p>
+                ) : (
+                  <div className="flex flex-wrap gap-2">
+                    {allTags.map((t) => (
+                      <button key={t} type="button" aria-pressed={tagFilter.includes(t)} className={chipClass(tagFilter.includes(t))} onClick={() => toggleTag(t)}>
+                        {t}
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {tagFilter.length > 0 && <p className="text-xs text-zinc-500">La pantalla debe tener todas las etiquetas elegidas.</p>}
+              </div>
+            </div>
+          )}
+        </div>
         <div className="ml-auto flex items-center gap-3">
           <span className="pill pill-warn">
-            {devices.length} {devices.length === 1 ? "pantalla" : "pantallas"}
+            {filtersActive || q
+              ? `${visible.length} de ${devices.length} ${deviceWord}`
+              : `${devices.length} ${deviceWord}`}
           </span>
           <button className="btn-primary" onClick={() => setPairing(true)}>
             <IconPlus />
@@ -61,20 +203,26 @@ export default function DevicesPage() {
       {notice && <p className="text-sm text-emerald-400">{notice}</p>}
 
       <div className="table-shell overflow-x-auto">
-        <table className="min-w-[640px]">
+        <table className="min-w-[860px]">
           <thead>
             <tr>
               <th>Nombre</th>
               <th>Estado</th>
               <th>Presentación por defecto</th>
               <th>Ubicación</th>
+              <th>Grupo</th>
+              <th>Etiquetas</th>
             </tr>
           </thead>
           <tbody>
             {visible.length === 0 && (
               <tr>
-                <td colSpan={4} className="py-12 text-center text-zinc-500">
-                  {devices.length === 0 ? "No hay pantallas todavía" : "Ninguna pantalla coincide con la búsqueda"}
+                <td colSpan={6} className="py-12 text-center text-zinc-500">
+                  {devices.length === 0
+                    ? "No hay pantallas todavía"
+                    : filtersActive || q
+                      ? "Ninguna pantalla coincide con la búsqueda o los filtros"
+                      : "Ninguna pantalla coincide con la búsqueda"}
                 </td>
               </tr>
             )}
@@ -98,6 +246,22 @@ export default function DevicesPage() {
                 </td>
                 <td className="text-zinc-300">{presentationName(d.defaultPresentationId) ?? <span className="text-zinc-500">Nada</span>}</td>
                 <td className="text-zinc-300">{d.location ?? <span className="text-zinc-500">Sin ubicación</span>}</td>
+                <td className="text-zinc-300">
+                  {(d.groupId && groupName.get(d.groupId)) || <span className="text-zinc-500">—</span>}
+                </td>
+                <td>
+                  {d.tags.length === 0 ? (
+                    <span className="text-xs italic text-zinc-500">Agregar etiquetas</span>
+                  ) : (
+                    <div className="flex flex-wrap gap-1.5">
+                      {d.tags.map((t) => (
+                        <span key={t} className="rounded-full bg-raised px-2 py-0.5 text-xs text-zinc-300">
+                          {t}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </td>
               </tr>
             ))}
           </tbody>
@@ -120,6 +284,7 @@ export default function DevicesPage() {
           key={selected.id}
           device={selected}
           presentations={presentations}
+          groups={groups}
           onClose={() => setSelectedId(null)}
           reload={load}
         />
@@ -263,29 +428,70 @@ function PairModal({ onClose, onPaired }: { onClose: () => void; onPaired: () =>
   );
 }
 
+function chipClass(active: boolean) {
+  return `rounded-full px-3 py-1 text-xs font-medium transition-colors ${
+    active ? "bg-accent text-white" : "bg-raised text-zinc-300 hover:bg-line"
+  }`;
+}
+
+type DevicePatch = {
+  name?: string;
+  location?: string | null;
+  defaultPresentationId?: string | null;
+  tags?: string[];
+  groupId?: string | null;
+};
+
 function DeviceDrawer({
   device,
   presentations,
+  groups,
   onClose,
   reload,
 }: {
   device: DeviceDTO;
   presentations: PresentationDTO[];
+  groups: GroupDTO[];
   onClose: () => void;
   reload: () => Promise<void>;
 }) {
   const [name, setName] = useState(device.name);
   const [location, setLocation] = useState(device.location ?? "");
+  const [tags, setTags] = useState(device.tags);
+  const [tagDraft, setTagDraft] = useState("");
   const [error, setError] = useState<string | null>(null);
 
-  async function save(patch: { name?: string; location?: string | null; defaultPresentationId?: string | null }) {
+  // Al llegar datos nuevos del servidor (polling), se toman como verdad.
+  useEffect(() => {
+    setTags(device.tags);
+  }, [device.tags]);
+
+  async function save(patch: DevicePatch): Promise<boolean> {
     setError(null);
     try {
       await api(`/api/devices/${device.id}`, { method: "PATCH", body: JSON.stringify(patch) });
       await reload();
+      return true;
     } catch (err) {
       setError((err as Error).message);
+      return false;
     }
+  }
+
+  async function saveTags(next: string[]) {
+    const prev = tags;
+    setTags(next);
+    if (!(await save({ tags: next }))) setTags(prev);
+  }
+
+  function addTag() {
+    const tag = tagDraft.trim().toLowerCase();
+    if (!tag) return setTagDraft("");
+    if (tags.includes(tag)) return setTagDraft("");
+    if (tag.length > MAX_TAG_LENGTH) return setError(`Cada etiqueta puede tener hasta ${MAX_TAG_LENGTH} caracteres`);
+    if (tags.length >= MAX_TAGS) return setError(`Una pantalla puede tener hasta ${MAX_TAGS} etiquetas`);
+    setTagDraft("");
+    void saveTags([...tags, tag]);
   }
 
   function saveName() {
@@ -369,6 +575,59 @@ function DeviceDrawer({
           placeholder="Sin ubicación"
         />
       </label>
+
+      <label className="block space-y-2">
+        <span className="text-sm font-medium">Grupo</span>
+        <select
+          className="input w-full"
+          value={device.groupId ?? ""}
+          onChange={(e) => void save({ groupId: e.target.value || null })}
+        >
+          <option value="">Sin grupo</option>
+          {groups.map((g) => (
+            <option key={g.id} value={g.id}>
+              {g.name}
+            </option>
+          ))}
+        </select>
+      </label>
+
+      <div className="space-y-2">
+        <span className="text-sm font-medium">Etiquetas</span>
+        {tags.length > 0 && (
+          <div className="flex flex-wrap gap-2">
+            {tags.map((t) => (
+              <span key={t} className="inline-flex items-center gap-1 rounded-full bg-raised py-1 pl-3 pr-1 text-xs text-zinc-200">
+                {t}
+                <button
+                  type="button"
+                  aria-label={`Quitar etiqueta ${t}`}
+                  className="rounded-full p-0.5 text-zinc-400 hover:bg-line hover:text-zinc-100"
+                  onClick={() => void saveTags(tags.filter((x) => x !== t))}
+                >
+                  <IconClose className="h-3 w-3" />
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
+        <input
+          className="input w-full"
+          value={tagDraft}
+          maxLength={MAX_TAG_LENGTH}
+          placeholder="Escribí y pulsá Enter o coma"
+          onChange={(e) => setTagDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === ",") {
+              e.preventDefault();
+              addTag();
+            }
+          }}
+        />
+        <p className="text-xs text-zinc-500">
+          Hasta {MAX_TAGS} etiquetas, de {MAX_TAG_LENGTH} caracteres como máximo.
+        </p>
+      </div>
 
       <label className="block space-y-2">
         <span className="text-sm font-medium">Presentación por defecto</span>

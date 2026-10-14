@@ -22,7 +22,7 @@ export async function GET(_req: Request, { params }: Ctx) {
     items: items.map(({ item, asset }) => ({
       mediaAssetId: asset.id,
       durationSeconds: item.durationSeconds,
-      asset: { ...asset, url: publicUrl(asset.objectKey) },
+      asset: { ...asset, url: publicUrl(asset.objectKey), thumbnailUrl: asset.thumbnailKey ? publicUrl(asset.thumbnailKey) : null },
     })),
   });
 }

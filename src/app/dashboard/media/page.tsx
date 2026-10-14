@@ -9,12 +9,13 @@ type Flash = { error: boolean; text: string };
 /** Menú de acciones de una fila. key = "a:<assetId>" o "f:<folderId>". */
 type Menu = { key: string; view: "main" | "move"; top: number; right: number };
 
-function uploadFile(file: File, onProgress: (p: number) => void) {
+function uploadFile(file: File, onProgress: (p: number) => void, durationSeconds?: number) {
   return new Promise<MediaDTO>((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     xhr.open("PUT", "/api/media/upload");
     xhr.setRequestHeader("content-type", file.type || "application/octet-stream");
     xhr.setRequestHeader("x-file-name", encodeURIComponent(file.name));
+    if (durationSeconds) xhr.setRequestHeader("x-duration-seconds", String(durationSeconds));
     xhr.upload.onprogress = (e) => e.lengthComputable && onProgress(e.loaded / e.total);
     xhr.onload = () => {
       let data: Partial<MediaDTO> & { error?: string } = {};
@@ -31,7 +32,102 @@ function uploadFile(file: File, onProgress: (p: number) => void) {
   });
 }
 
+/** Miniaturas generadas en el navegador: ancho máximo y calidad JPEG. */
+const THUMB_MAX_WIDTH = 320;
+const THUMB_QUALITY = 0.8;
+
+/** Ancho/alto escalados para que el ancho no supere THUMB_MAX_WIDTH. */
+function thumbSize(width: number, height: number) {
+  const scale = Math.min(1, THUMB_MAX_WIDTH / width);
+  return { w: Math.max(1, Math.round(width * scale)), h: Math.max(1, Math.round(height * scale)) };
+}
+
+function canvasToJpeg(canvas: HTMLCanvasElement) {
+  return new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/jpeg", THUMB_QUALITY));
+}
+
+/** Miniatura JPEG de una imagen. Devuelve null si el navegador no puede decodificarla. */
+async function makeImageThumb(file: File): Promise<Blob | null> {
+  try {
+    const bitmap = await createImageBitmap(file);
+    const { w, h } = thumbSize(bitmap.width, bitmap.height);
+    const canvas = document.createElement("canvas");
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return null;
+    ctx.drawImage(bitmap, 0, 0, w, h);
+    bitmap.close();
+    return await canvasToJpeg(canvas);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Duración (segundos enteros) y miniatura de un video: el frame de ~1 s,
+ * o del 10% si el video dura menos de 10 s. Si el navegador no puede
+ * decodificarlo, devuelve lo que se haya podido obtener (o nulls).
+ */
+function readVideo(file: File): Promise<{ duration: number | null; thumb: Blob | null }> {
+  return new Promise((resolve) => {
+    const url = URL.createObjectURL(file);
+    const video = document.createElement("video");
+    let duration: number | null = null;
+    let settled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+
+    const finish = (thumb: Blob | null) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      video.removeAttribute("src");
+      video.load();
+      URL.revokeObjectURL(url);
+      resolve({ duration, thumb });
+    };
+
+    timer = setTimeout(() => finish(null), 15000);
+    video.muted = true;
+    video.playsInline = true;
+    video.preload = "auto";
+    video.onerror = () => finish(null);
+    video.onloadedmetadata = () => {
+      const d = video.duration;
+      if (!Number.isFinite(d) || d <= 0) return finish(null);
+      duration = Math.round(d) > 0 ? Math.round(d) : null;
+      if (!video.videoWidth || !video.videoHeight) return finish(null);
+      video.currentTime = Math.min(1, d * 0.1);
+    };
+    video.onseeked = () => {
+      try {
+        const { w, h } = thumbSize(video.videoWidth, video.videoHeight);
+        const canvas = document.createElement("canvas");
+        canvas.width = w;
+        canvas.height = h;
+        canvas.getContext("2d")?.drawImage(video, 0, 0, w, h);
+        void canvasToJpeg(canvas).then(finish, () => finish(null));
+      } catch {
+        finish(null);
+      }
+    };
+    video.src = url;
+  });
+}
+
+/** Sube la miniatura ya asociada al asset. Un fallo no interrumpe la subida. */
+async function uploadThumb(assetId: string, thumb: Blob) {
+  const res = await fetch(`/api/media/${assetId}/thumbnail`, {
+    method: "PUT",
+    headers: { "content-type": "image/jpeg" },
+    body: thumb,
+  });
+  if (!res.ok) throw new Error(`Error ${res.status}`);
+}
+
 const typeLabel = (m: MediaDTO) => m.mimeType.split("/")[1] ?? m.kind;
+/** mm:ss para la duración de un video. */
+const fmtDuration = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 const fmtDate = (iso: string) => new Date(iso).toLocaleString("es-AR", { dateStyle: "medium", timeStyle: "short" });
 const menuItem = "flex w-full items-center px-3 py-2 text-left hover:bg-raised disabled:opacity-40 disabled:hover:bg-transparent";
 
@@ -81,7 +177,11 @@ export default function MediaPage() {
     for (const [i, f] of list.entries()) {
       const setItem = (patch: Partial<Upload>) => setUploads((u) => u.map((x, j) => (j === i ? { ...x, ...patch } : x)));
       try {
-        const asset = await uploadFile(f, (p) => setItem({ progress: p }));
+        // Si la generación falla, se sube igual sin miniatura ni duración.
+        const isVideo = f.type.startsWith("video/");
+        const prep = isVideo ? await readVideo(f) : { duration: null, thumb: await makeImageThumb(f) };
+        const asset = await uploadFile(f, (p) => setItem({ progress: p }), prep.duration ?? undefined);
+        if (prep.thumb) await uploadThumb(asset.id, prep.thumb).catch(() => {});
         if (dest) await api(`/api/media/${asset.id}`, { method: "PATCH", body: JSON.stringify({ folderId: dest }) });
         setItem({ progress: 1 });
       } catch (err) {
@@ -305,7 +405,7 @@ export default function MediaPage() {
         )}
 
         <div className="table-shell overflow-x-auto">
-          <table className="min-w-[680px]">
+          <table className="min-w-[760px]">
             <thead>
               <tr>
                 <th className="w-32">
@@ -313,6 +413,7 @@ export default function MediaPage() {
                 </th>
                 <th>Nombre</th>
                 <th>Tipo</th>
+                <th>Duración</th>
                 <th>Peso</th>
                 <th>Fecha de alta</th>
                 <th className="w-12">
@@ -331,6 +432,7 @@ export default function MediaPage() {
                   <td className="font-medium">{f.name}</td>
                   <td className="text-zinc-400">Carpeta</td>
                   <td className="text-zinc-500">—</td>
+                  <td className="text-zinc-500">—</td>
                   <td className="whitespace-nowrap text-zinc-400">{fmtDate(f.createdAt)}</td>
                   <td className="text-right">
                     <button
@@ -348,7 +450,10 @@ export default function MediaPage() {
                 <tr key={m.id}>
                   <td>
                     <div className="aspect-video w-24 overflow-hidden rounded-md bg-black">
-                      {m.kind === "image" ? (
+                      {m.thumbnailUrl ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img src={m.thumbnailUrl} alt="" loading="lazy" className="h-full w-full object-cover" />
+                      ) : m.kind === "image" ? (
                         // eslint-disable-next-line @next/next/no-img-element
                         <img src={m.url} alt="" loading="lazy" className="h-full w-full object-cover" />
                       ) : (
@@ -360,6 +465,9 @@ export default function MediaPage() {
                     {m.originalName}
                   </td>
                   <td className="text-zinc-400">{typeLabel(m)}</td>
+                  <td className="whitespace-nowrap tabular-nums text-zinc-400">
+                    {m.kind === "video" && m.durationSeconds != null ? fmtDuration(m.durationSeconds) : "—"}
+                  </td>
                   <td className="whitespace-nowrap text-zinc-400">{formatBytes(m.sizeBytes)}</td>
                   <td className="whitespace-nowrap text-zinc-400">{fmtDate(m.uploadedAt)}</td>
                   <td className="text-right">
@@ -376,7 +484,7 @@ export default function MediaPage() {
 
               {visibleFolders.length === 0 && visibleMedia.length === 0 && (
                 <tr>
-                  <td colSpan={6} className="py-12 text-center text-zinc-500">
+                  <td colSpan={7} className="py-12 text-center text-zinc-500">
                     {q ? "Sin resultados" : folderId === null ? "Todavía no hay medios. Arrastrá archivos acá o usá Agregar." : "Esta carpeta está vacía."}
                   </td>
                 </tr>

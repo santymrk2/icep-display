@@ -15,6 +15,8 @@ export type MediaDTO = {
   id: string;
   originalName: string;
   url: string;
+  thumbnailUrl: string | null;
+  durationSeconds: number | null;
   kind: "image" | "video";
   mimeType: string;
   sizeBytes: number;
@@ -35,6 +37,8 @@ export type DeviceDTO = {
   online: boolean;
   defaultPresentationId: string | null;
   lastSeenAt: string | null;
+  tags: string[];
+  groupId: string | null;
 };
 
 export type PresentationDTO = {
@@ -42,6 +46,12 @@ export type PresentationDTO = {
   name: string;
   description: string | null;
   itemCount: number;
+};
+
+export type GroupDTO = {
+  id: string;
+  name: string;
+  deviceCount: number;
 };
 
 export type ScheduleDTO = {

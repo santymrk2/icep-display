@@ -44,6 +44,18 @@
       '; path=/; max-age=' + (token ? 315360000 : 0);
   }
 
+  /* ---------- Última lista de reproducción (para arrancar sin red) ---------- */
+  var PLAY_KEY = 'carteleria.lastplay';
+  function saveLastPlay(items) {
+    try { window.localStorage.setItem(PLAY_KEY, JSON.stringify(items)); } catch (e) {}
+  }
+  function loadLastPlay() {
+    try { var t = window.localStorage.getItem(PLAY_KEY); return t ? JSON.parse(t) : null; } catch (e) { return null; }
+  }
+  function clearLastPlay() {
+    try { window.localStorage.removeItem(PLAY_KEY); } catch (e) {}
+  }
+
   /* ---------- Mensajes en pantalla ---------- */
   function showMessage(top, code, bottom) {
     document.getElementById('msg-top').textContent = top || '';
@@ -178,7 +190,9 @@
       writeToken(msg.token);
     } else if (msg.type === 'unpaired') {
       writeToken(null);
+      clearLastPlay();
     } else if (msg.type === 'play') {
+      saveLastPlay(msg.items || []);
       setPlaylist(msg.items || []);
     } else if (msg.type === 'reload') {
       location.reload();
@@ -208,7 +222,10 @@
     ws.onerror = function () { try { ws.close(); } catch (e) {} };
   }
 
-  showMessage('Conectando…', '', '');
+  // Si el TV arranca sin red, se muestra lo último que se reprodujo (las imágenes y videos
+  // salen de la caché del navegador si ya se vieron; si no, se omiten y se reintenta).
+  var cached = readToken() ? loadLastPlay() : null;
+  if (cached && cached.length) { setPlaylist(cached); } else { showMessage('Conectando…', '', ''); }
   connect();
 
   /* Pantalla completa con un toque / OK del control (donde esté permitido). */

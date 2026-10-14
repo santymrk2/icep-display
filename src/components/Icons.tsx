@@ -25,3 +25,6 @@ export const IconClose = ({ className }: P) => (
 export const IconPlus = ({ className }: P) => (
   <svg {...base} width={16} height={16} className={className}><path d="M12 5v14M5 12h14" /></svg>
 );
+export const IconUsers = ({ className }: P) => (
+  <svg {...base} className={className}><circle cx="9" cy="8" r="3.2" /><path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6" /><circle cx="17" cy="9" r="2.4" /><path d="M17 14.2c2.4.2 4 2 4 4.8" /></svg>
+);

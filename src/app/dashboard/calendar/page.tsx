@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { api, type DeviceDTO, type PresentationDTO, type ScheduleDTO } from "@/lib/client";
+import { api, type DeviceDTO, type GroupDTO, type PresentationDTO, type ScheduleDTO } from "@/lib/client";
 
 const DAYS_LONG = ["Domingo", "Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"];
 const DAYS_SHORT = ["DOM", "LUN", "MAR", "MIÉ", "JUE", "VIE", "SÁB"];
@@ -25,7 +25,8 @@ type Form = {
   id: string | null;
   name: string;
   presentationId: string;
-  deviceId: string;
+  /** "" = todas las pantallas, "g:<id>" = grupo, "d:<id>" = pantalla. */
+  target: string;
   days: boolean[];
   startTime: string;
   endTime: string;
@@ -36,7 +37,7 @@ const blankForm = (days: boolean[] = [false, true, true, true, true, true, false
   id: null,
   name: "",
   presentationId: "",
-  deviceId: "",
+  target: "",
   days,
   startTime: "09:00",
   endTime: "10:00",
@@ -57,17 +58,54 @@ const addDays = (d: Date, n: number) => new Date(d.getFullYear(), d.getMonth(), 
 const startOfWeek = (d: Date) => addDays(d, -d.getDay());
 const sameDay = (a: Date, b: Date) => a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
 
+const targetOf = (s: { deviceId: string | null; groupId: string | null }) =>
+  s.groupId ? `g:${s.groupId}` : s.deviceId ? `d:${s.deviceId}` : "";
+
+const targetIds = (target: string) =>
+  target.startsWith("g:")
+    ? { deviceId: null, groupId: target.slice(2) }
+    : { deviceId: target.startsWith("d:") ? target.slice(2) : null, groupId: null };
+
 function toForm(s: ScheduleDTO): Form {
   return {
     id: s.id,
     name: s.name,
     presentationId: s.presentationId,
-    deviceId: s.deviceId ?? "",
+    target: targetOf(s),
     days: DAYS_LONG.map((_, i) => hasDay(s.daysOfWeek, i)),
     startTime: hhmm(s.startTime),
     endTime: hhmm(s.endTime),
     enabled: s.enabled,
   };
+}
+
+/** Reparte en carriles los bloques que se pisan en el tiempo para que se vean lado a lado. */
+function layoutLanes(list: ScheduleDTO[]) {
+  const sorted = [...list].sort((a, b) => toMin(a.startTime) - toMin(b.startTime) || toMin(b.endTime) - toMin(a.endTime));
+  const result = new Map<string, { lane: number; lanes: number }>();
+  let cluster: { s: ScheduleDTO; lane: number }[] = [];
+  let clusterEnd = -1;
+  const flush = () => {
+    const lanes = cluster.reduce((m, c) => Math.max(m, c.lane + 1), 1);
+    for (const c of cluster) result.set(c.s.id, { lane: c.lane, lanes });
+    cluster = [];
+  };
+  const laneEnds: number[] = [];
+  for (const s of sorted) {
+    const start = toMin(s.startTime);
+    if (start >= clusterEnd) {
+      flush();
+      laneEnds.length = 0;
+      clusterEnd = -1;
+    }
+    let lane = laneEnds.findIndex((end) => end <= start);
+    if (lane === -1) lane = laneEnds.length;
+    laneEnds[lane] = toMin(s.endTime);
+    clusterEnd = Math.max(clusterEnd, toMin(s.endTime));
+    cluster.push({ s, lane });
+  }
+  flush();
+  return result;
 }
 
 function place(s: ScheduleDTO) {
@@ -94,14 +132,18 @@ export default function CalendarPage() {
   const [list, setList] = useState<ScheduleDTO[]>([]);
   const [presentations, setPresentations] = useState<PresentationDTO[]>([]);
   const [devices, setDevices] = useState<DeviceDTO[]>([]);
+  const [groups, setGroups] = useState<GroupDTO[]>([]);
+  const [groupsOpen, setGroupsOpen] = useState(false);
   const [form, setForm] = useState<Form>(() => blankForm());
   const [msg, setMsg] = useState<string | null>(null);
+  const [msgError, setMsgError] = useState(false);
   const [view, setView] = useState<View>("semana");
   // Se fijan al montar para no producir diferencias entre servidor y cliente.
   const [now, setNow] = useState<Date | null>(null);
   const [cursor, setCursor] = useState<Date | null>(null);
 
   const load = useCallback(async () => setList(await api<ScheduleDTO[]>("/api/schedules")), []);
+  const loadGroups = useCallback(async () => setGroups(await api<GroupDTO[]>("/api/groups")), []);
 
   useEffect(() => {
     const t = new Date();
@@ -109,14 +151,19 @@ export default function CalendarPage() {
     setCursor(startOfDay(t));
     const id = setInterval(() => setNow(new Date()), 60_000);
     void load();
+    void loadGroups();
     void api<PresentationDTO[]>("/api/presentations").then(setPresentations);
     void api<DeviceDTO[]>("/api/devices").then(setDevices);
     return () => clearInterval(id);
-  }, [load]);
+  }, [load, loadGroups]);
 
   const presName = (id: string) => presentations.find((p) => p.id === id)?.name ?? "—";
   const colorOf = (id: string) => PALETTE[Math.max(0, presentations.findIndex((p) => p.id === id)) % PALETTE.length];
-  const screenName = (id: string | null) => (id ? devices.find((d) => d.id === id)?.name ?? "Pantalla" : "Todas las pantallas");
+  const targetLabel = (s: ScheduleDTO) => {
+    if (s.groupId) return `Grupo: ${groups.find((g) => g.id === s.groupId)?.name ?? "—"}`;
+    if (s.deviceId) return devices.find((d) => d.id === s.deviceId)?.name ?? "Pantalla";
+    return "Todas las pantallas";
+  };
 
   const set = <K extends keyof Form>(key: K, value: Form[K]) => setForm((f) => ({ ...f, [key]: value }));
   const toggleDay = (i: number) => setForm((f) => ({ ...f, days: f.days.map((on, j) => (j === i ? !on : on)) }));
@@ -133,7 +180,7 @@ export default function CalendarPage() {
     const body = JSON.stringify({
       name: form.name,
       presentationId: form.presentationId,
-      deviceId: form.deviceId || null,
+      ...targetIds(form.target),
       daysOfWeek: bitmask(form.days),
       startTime: form.startTime,
       endTime: form.endTime,
@@ -143,9 +190,11 @@ export default function CalendarPage() {
       if (form.id) await api(`/api/schedules/${form.id}`, { method: "PATCH", body });
       else await api("/api/schedules", { method: "POST", body });
       setForm(blankForm());
+      setMsgError(false);
       setMsg("Guardado. Las pantallas se actualizaron.");
       await load();
     } catch (err) {
+      setMsgError(true);
       setMsg((err as Error).message);
     }
   }
@@ -155,9 +204,11 @@ export default function CalendarPage() {
     try {
       await api(`/api/schedules/${form.id}`, { method: "DELETE" });
       setForm(blankForm());
+      setMsgError(false);
       setMsg("Bloque borrado.");
       await load();
     } catch (err) {
+      setMsgError(true);
       setMsg((err as Error).message);
     }
   }
@@ -233,6 +284,9 @@ export default function CalendarPage() {
               </button>
             </div>
             <span className="text-sm font-medium">{rangeLabel}</span>
+            <button className="btn" onClick={() => setGroupsOpen(true)}>
+              Grupos
+            </button>
             <div className="ml-auto inline-flex rounded-lg border border-line bg-canvas p-0.5">
               {VIEWS.map((v) => (
                 <button
@@ -341,9 +395,13 @@ export default function CalendarPage() {
                             <span className="h-px flex-1 bg-accent" />
                           </div>
                         )}
-                        {onDate(d).map((s) => {
+                        {(() => {
+                          const dayList = onDate(d);
+                          const lanes = layoutLanes(dayList);
+                          return dayList.map((s) => {
                           const pos = place(s);
                           if (!pos) return null;
+                          const ln = lanes.get(s.id) ?? { lane: 0, lanes: 1 };
                           return (
                             <button
                               key={`${s.id}-${d.getDay()}`}
@@ -352,19 +410,21 @@ export default function CalendarPage() {
                                 e.stopPropagation();
                                 editSchedule(s);
                               }}
-                              title={`${s.name} · ${presName(s.presentationId)} · ${screenName(s.deviceId)}`}
-                              className={`absolute inset-x-1 z-[5] overflow-hidden rounded-md px-2 py-1 text-left text-xs leading-tight text-white shadow ${colorOf(s.presentationId)} ${
+                              title={`${s.name} · ${presName(s.presentationId)} · ${targetLabel(s)}`}
+                              className={`absolute z-[5] overflow-hidden rounded-md px-2 py-1 text-left text-xs leading-tight text-white shadow ${colorOf(s.presentationId)} ${
                                 s.enabled ? "" : "opacity-40"
                               } ${form.id === s.id ? "ring-2 ring-white" : ""}`}
-                              style={{ top: pos.top, height: pos.height }}
+                              style={{ top: pos.top, height: pos.height, left: `calc(${(ln.lane / ln.lanes) * 100}% + 2px)`, width: `calc(${100 / ln.lanes}% - 4px)` }}
                             >
                               <div className="truncate font-semibold">{s.name}</div>
                               <div className="truncate opacity-80">
                                 {hhmm(s.startTime)} – {hhmm(s.endTime)}
+                                {(s.deviceId || s.groupId) && ` · ${targetLabel(s)}`}
                               </div>
                             </button>
                           );
-                        })}
+                          });
+                        })()}
                       </div>
                     );
                   })}
@@ -444,13 +504,22 @@ export default function CalendarPage() {
 
           <label className="block space-y-1.5 text-sm">
             <span className="text-zinc-400">Pantalla</span>
-            <select className="input w-full" value={form.deviceId} onChange={(e) => set("deviceId", e.target.value)}>
+            <select className="input w-full" value={form.target} onChange={(e) => set("target", e.target.value)}>
               <option value="">Todas las pantallas</option>
-              {devices.map((d) => (
-                <option key={d.id} value={d.id}>
-                  {d.name}
-                </option>
-              ))}
+              <optgroup label="Grupos">
+                {groups.map((g) => (
+                  <option key={g.id} value={`g:${g.id}`}>
+                    {g.name}
+                  </option>
+                ))}
+              </optgroup>
+              <optgroup label="Pantallas">
+                {devices.map((d) => (
+                  <option key={d.id} value={`d:${d.id}`}>
+                    {d.name}
+                  </option>
+                ))}
+              </optgroup>
             </select>
           </label>
 
@@ -459,7 +528,11 @@ export default function CalendarPage() {
             Activo
           </label>
 
-          {msg && <p className="text-sm text-zinc-400">{msg}</p>}
+          {msg && (
+            <p role={msgError ? "alert" : "status"} className={`text-sm ${msgError ? "text-red-400" : "text-zinc-400"}`}>
+              {msg}
+            </p>
+          )}
 
           <div className="flex gap-2">
             <button className="btn-primary flex-1" disabled={!canSave}>
@@ -472,6 +545,148 @@ export default function CalendarPage() {
             )}
           </div>
         </form>
+      </div>
+
+      {groupsOpen && (
+        <GroupsDialog
+          groups={groups}
+          onChanged={async () => {
+            await loadGroups();
+            await load();
+          }}
+          onClose={() => setGroupsOpen(false)}
+        />
+      )}
+    </div>
+  );
+}
+
+function GroupsDialog({ groups, onChanged, onClose }: { groups: GroupDTO[]; onChanged: () => Promise<void>; onClose: () => void }) {
+  const [newName, setNewName] = useState("");
+  const [editId, setEditId] = useState<string | null>(null);
+  const [editName, setEditName] = useState("");
+  const [msg, setMsg] = useState<{ text: string; error: boolean } | null>(null);
+
+  async function run(action: () => Promise<string>) {
+    setMsg(null);
+    try {
+      const text = await action();
+      setMsg({ text, error: false });
+      await onChanged();
+    } catch (err) {
+      setMsg({ text: (err as Error).message, error: true });
+    }
+  }
+
+  function create(e: React.FormEvent) {
+    e.preventDefault();
+    void run(async () => {
+      await api("/api/groups", { method: "POST", body: JSON.stringify({ name: newName }) });
+      setNewName("");
+      return "Grupo creado.";
+    });
+  }
+
+  function rename(id: string) {
+    void run(async () => {
+      await api(`/api/groups/${id}`, { method: "PATCH", body: JSON.stringify({ name: editName }) });
+      setEditId(null);
+      return "Grupo renombrado.";
+    });
+  }
+
+  function remove(g: GroupDTO) {
+    if (!confirm(`¿Borrar el grupo "${g.name}"? También se borrarán sus bloques de programación. Sus pantallas quedan sin grupo.`)) return;
+    void run(async () => {
+      const res = await api<{ schedulesDeleted: number }>(`/api/groups/${g.id}`, { method: "DELETE" });
+      return `Grupo borrado. Se borraron ${res.schedulesDeleted} bloque(s).`;
+    });
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={onClose}>
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label="Grupos de pantallas"
+        className="card w-full max-w-md space-y-4 p-5"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between">
+          <h2 className="font-semibold">Grupos de pantallas</h2>
+          <button type="button" className="text-sm text-zinc-400 hover:text-zinc-100" onClick={onClose}>
+            Cerrar
+          </button>
+        </div>
+
+        <form onSubmit={create} className="flex gap-2">
+          <input
+            className="input min-w-0 flex-1"
+            placeholder="Nombre del grupo"
+            aria-label="Nombre del nuevo grupo"
+            value={newName}
+            onChange={(e) => setNewName(e.target.value)}
+          />
+          <button className="btn-primary" disabled={!newName.trim()}>
+            Crear
+          </button>
+        </form>
+
+        {groups.length === 0 ? (
+          <p className="text-sm text-zinc-500">Todavía no hay grupos.</p>
+        ) : (
+          <ul className="text-sm">
+            {groups.map((g) => (
+              <li key={g.id} className="flex flex-wrap items-center gap-2 border-b border-line py-2 last:border-0">
+                {editId === g.id ? (
+                  <>
+                    <input
+                      className="input min-w-0 flex-1"
+                      aria-label="Nuevo nombre"
+                      value={editName}
+                      onChange={(e) => setEditName(e.target.value)}
+                    />
+                    <button type="button" className="btn-primary" disabled={!editName.trim()} onClick={() => rename(g.id)}>
+                      Guardar
+                    </button>
+                    <button type="button" className="btn" onClick={() => setEditId(null)}>
+                      Cancelar
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate font-medium">{g.name}</div>
+                      <div className="text-xs text-zinc-500">
+                        {g.deviceCount} {g.deviceCount === 1 ? "pantalla" : "pantallas"}
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      className="btn"
+                      onClick={() => {
+                        setMsg(null);
+                        setEditId(g.id);
+                        setEditName(g.name);
+                      }}
+                    >
+                      Renombrar
+                    </button>
+                    <button type="button" className="btn-danger" onClick={() => remove(g)}>
+                      Borrar
+                    </button>
+                  </>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+
+        {msg && (
+          <p role={msg.error ? "alert" : "status"} className={`text-sm ${msg.error ? "text-red-400" : "text-zinc-400"}`}>
+            {msg.text}
+          </p>
+        )}
       </div>
     </div>
   );

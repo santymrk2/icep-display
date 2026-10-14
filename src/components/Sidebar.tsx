@@ -2,17 +2,22 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { IconCalendar, IconDevices, IconMedia, IconPresentations } from "./Icons";
+import { IconCalendar, IconDevices, IconMedia, IconPresentations, IconUsers } from "./Icons";
+import { useMe } from "./Session";
 
-const nav = [
+const baseNav = [
   { href: "/dashboard/devices", label: "Pantallas", Icon: IconDevices },
   { href: "/dashboard/media", label: "Medios", Icon: IconMedia },
   { href: "/dashboard/presentations", label: "Presentaciones", Icon: IconPresentations },
   { href: "/dashboard/calendar", label: "Calendario", Icon: IconCalendar },
 ];
 
+const adminNav = { href: "/dashboard/users", label: "Usuarios", Icon: IconUsers };
+
 export default function Sidebar() {
   const path = usePathname();
+  const me = useMe();
+  const nav = me?.role === "admin" ? [...baseNav, adminNav] : baseNav;
   return (
     <nav className="flex w-[84px] shrink-0 flex-col items-center gap-3 border-r border-line bg-panel py-5">
       {nav.map(({ href, label, Icon }) => {
