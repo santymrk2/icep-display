@@ -1,43 +1,25 @@
-# Plan de implementación
+# Plan de implementación y estado
 
-Decisiones tomadas para arrancar (cambiables): una sola contraseña de administración, un solo servidor Node (Next + WebSocket en el mismo proceso), archivos servidos a través de la app, hora del servidor como zona horaria de la programación.
+Escala esperada: 2 o 3 pantallas, modelos de TV desconocidos (por eso el reproductor es ES5 plano).
 
-## Etapa 0: Scaffold (hecho)
-Compose (db, minio, app), esquema Drizzle con las 5 entidades del SRS más carpetas, grupos y takeovers, WebSocket, subida en streaming a MinIO, reproductor, panel básico.
-Verificado: `tsc` y `next build` pasan, `docker compose config` valida, y la API, el WebSocket y el reproductor funcionan contra un Postgres real y un MinIO simulado (el reproductor, en Chromium). **No probado**: Docker Compose, MinIO real, TVs reales, WSL2.
+## Hecho (probado en Chromium contra Postgres; MinIO simulado)
+- Stack Docker Compose (db, minio, app), esquema Drizzle, WebSocket, subida en streaming, reproductor, panel.
+- Calendario semanal/diario/mensual, detección de solapamientos, grupos de pantallas (los bloques de una pantalla ganan sobre los de su grupo, y estos sobre "todas").
+- Medios: carpetas, miniaturas reales (generadas en el navegador) y duración de video.
+- Pantallas: etiquetas, grupo, filtros, panel de detalle.
+- Presentaciones: editor con arrastrar para ordenar y vista previa.
+- Usuarios con login (administrador y operador), sesiones, límite de intentos.
+- Reproductor: reconexión automática, vigilancia de videos trabados, sigue mostrando lo último si cae el servidor, arranca con la última lista guardada.
+- Respaldos (`scripts/backup.sh`) y guía de instalación en Windows (`docs/WINDOWS.md`).
 
-## Etapa 1: Primera versión usable (MVP)
-Objetivo: reproducir contenido real en un TV de la iglesia.
-0. Escala esperada: 2 o 3 pantallas, modelos de TV desconocidos. Por eso el reproductor es ES5 plano y no se optimiza para más.
-1. Levantar con `docker compose up` en el servidor real y corregir lo que aparezca.
-2. Probar el reproductor en el TV con MSX (localStorage, autoplay de video, reconexión, pantalla completa). Es el mayor riesgo técnico.
-3. Probar la subida de un video 4K de varios GB por la LAN.
-4. Emparejamiento, medios, presentaciones y takeover de punta a punta con 1-2 pantallas.
-5. Acceso desde el celular/notebook por IP local.
+## No probado (necesita tu servidor y tus TVs)
+- `docker compose up` real, MinIO real, WSL2 y red de la LAN, arranque automático, respaldos y restauración.
+- Reproductor en TVs reales con MSX; video 4K (si un modelo no lo soporta, usar 1080p H.264/MP4).
+- Túnel (Cloudflare o NetBird).
+- Arrastrar filas con el mouse y otras interacciones finas del panel; uso desde celular.
 
-## Etapa 2: Calendarios
-- Pantalla de calendario semanal/mensual para crear bloques (inicio, fin, días, presentación, pantalla o grupo).
-- Hoy el backend ya resuelve franjas semanales simples (`schedules`); falta la interfaz, validación de solapamientos y reglas más ricas (excepciones, fechas puntuales, `rrule`).
-- Mostrar en Pantallas qué se está reproduciendo y por qué (takeover, programación, defecto).
-
-## Etapa 3: Organización de medios
-- Carpetas/colecciones en la UI (la tabla ya existe), mover archivos, búsqueda.
-- Miniaturas reales de video (generadas al subir) y duración del video.
-- Arrastrar y soltar para ordenar presentaciones.
-- Grupos de pantallas.
-
-## Etapa 4: Robustez en el TV
-- Caché local en el reproductor (Cache API / service worker) para seguir funcionando si cae la red.
-- Transiciones, precarga de video, indicador de estado, comandos remotos (recargar, siguiente slide).
-- Estado "reproduciendo ahora" en tiempo real en el panel (WebSocket del lado admin).
-
-## Etapa 5: Acceso remoto y seguridad
-- Túnel (Cloudflare Tunnel o NetBird) solo para el panel.
-- Usuarios y roles (admin / operador que solo hace takeovers), sesiones en lugar de Basic Auth, límites de subida.
-- Respaldos de Postgres y MinIO, arranque automático del stack con Windows.
-
-## Preguntas abiertas
-- ¿Cuántas pantallas y qué modelo de TV? (define cuánto cuidar el rendimiento de video 4K en MSX)
-- ¿Más de una persona va a operar el panel? ¿Hacen falta roles?
-- ¿Texto/anuncios o URLs además de imagen y video? El SRS solo menciona imagen y video.
-- ¿Cloudflare Tunnel o NetBird?
+## Limitaciones conocidas
+- Si el servidor está caído al encender el TV, la página del reproductor no carga (no hay service worker; es una decisión por compatibilidad con TVs viejos).
+- Las miniaturas se generan al subir: los archivos subidos antes no tienen (hay que volver a subirlos).
+- Los bloques del calendario se repiten cada semana; no hay excepciones por fecha ni reglas tipo "cada 2 semanas" todavía (la columna `rrule` está reservada).
+- Antes de producción conviene un chequeo de la tabla `schedules` si se editan bloques a la vez desde dos navegadores (la detección de solapamientos no es transaccional).

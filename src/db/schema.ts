@@ -1,3 +1,4 @@
+import { sql } from "drizzle-orm";
 import {
   pgTable,
   uuid,
@@ -14,6 +15,7 @@ import {
 } from "drizzle-orm/pg-core";
 
 export const mediaKind = pgEnum("media_kind", ["image", "video"]);
+export const userRole = pgEnum("user_role", ["admin", "operator"]);
 
 /** Carpetas / colecciones virtuales para organizar medios. */
 export const mediaFolders = pgTable("media_folders", {
@@ -30,6 +32,10 @@ export const mediaAssets = pgTable("media_assets", {
   mimeType: text("mime_type").notNull(),
   kind: mediaKind("kind").notNull(),
   sizeBytes: bigint("size_bytes", { mode: "number" }).notNull(),
+  /** Miniatura JPEG generada en el navegador al subir (clave en MinIO). */
+  thumbnailKey: text("thumbnail_key"),
+  /** Duración en segundos (solo videos), medida en el navegador al subir. */
+  durationSeconds: integer("duration_seconds"),
   folderId: uuid("folder_id").references(() => mediaFolders.id, { onDelete: "set null" }),
   uploadedAt: timestamp("uploaded_at", { withTimezone: true }).notNull().defaultNow(),
 });
@@ -75,6 +81,7 @@ export const devices = pgTable("devices", {
   /** Secreto que guarda el reproductor tras el emparejamiento. */
   connectionToken: text("connection_token").notNull().unique(),
   groupId: uuid("group_id").references(() => deviceGroups.id, { onDelete: "set null" }),
+  tags: text("tags").array().notNull().default(sql`'{}'::text[]`),
   /** Presentación por defecto cuando no hay programación ni takeover activo. */
   defaultPresentationId: uuid("default_presentation_id").references(() => presentations.id, {
     onDelete: "set null",
@@ -123,3 +130,23 @@ export const takeovers = pgTable("takeovers", {
 export type MediaAsset = typeof mediaAssets.$inferSelect;
 export type Device = typeof devices.$inferSelect;
 export type Presentation = typeof presentations.$inferSelect;
+
+/** Usuarios del panel. "admin" gestiona todo; "operator" solo ve y hace tomas de control. */
+export const users = pgTable("users", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  username: text("username").notNull().unique(),
+  passwordHash: text("password_hash").notNull(),
+  role: userRole("role").notNull().default("operator"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+/** Sesiones del panel. Se guarda el hash SHA-256 del token, nunca el token. */
+export const sessions = pgTable("sessions", {
+  tokenHash: text("token_hash").primaryKey(),
+  userId: uuid("user_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+});
+
+export type User = typeof users.$inferSelect;

@@ -1,4 +1,5 @@
 import Sidebar from "@/components/Sidebar";
+import { HeaderUser } from "@/components/Session";
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   return (
@@ -8,6 +9,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-accent text-base font-bold">C</span>
           Cartelería
         </div>
+        <HeaderUser />
       </header>
       <div className="flex min-h-0 flex-1">
         <Sidebar />

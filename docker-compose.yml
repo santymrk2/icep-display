@@ -1,3 +1,4 @@
+name: carteleria
 services:
   db:
     image: postgres:17-alpine

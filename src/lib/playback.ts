@@ -91,6 +91,9 @@ export async function resolvePlayback(deviceId: string, now = new Date()): Promi
       ),
     )
     .orderBy(desc(schedules.priority));
+  // Especificidad primero (pantalla > grupo > todas); dentro de cada nivel manda la prioridad (sort es estable).
+  const specificity = (s: (typeof candidates)[number]) => (s.deviceId ? 0 : s.groupId ? 1 : 2);
+  candidates.sort((a, b) => specificity(a) - specificity(b));
 
   const time = hhmm(now);
   const today = isoDate(now);

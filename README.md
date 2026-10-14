@@ -51,11 +51,16 @@ El reproductor (`public/player.html`) es HTML + JavaScript ES5 plano, sin React 
 - Si se corta la red sigue mostrando lo último y reconecta solo; aparece un punto rojo abajo a la derecha mientras no hay conexión.
 - Probado en Chromium moderno. **No probado en ningún TV real**: el punto crítico es el decodificado de video 4K; si un modelo no lo soporta, conviene subir videos en 1080p (H.264/MP4).
 
-## Seguridad
+## Seguridad y usuarios
 
-- `ADMIN_PASSWORD` activa autenticación básica en `/dashboard` y `/api`. Sin definir, el panel queda abierto.
-- `/player`, `/ws` y `/files` quedan abiertos en la LAN (los TV no tienen cómo loguearse). Para acceso remoto, exponer solo el panel por el túnel (Cloudflare Tunnel / NetBird) y mantener la contraseña puesta.
-- La autenticación se hace en `server.ts` (no en middleware de Next, que rompe las subidas grandes). No hay usuarios ni roles todavía.
+- El panel y la API piden iniciar sesión (`/login`). Hay dos roles: **administrador** (todo) y **operador** (ver y poner contenido "al aire").
+- El primer administrador se crea al arrancar por primera vez, con `ADMIN_USER` y `ADMIN_PASSWORD`; si no definís la contraseña se genera una y se imprime en `docker compose logs app`. Después, usuarios y contraseñas se gestionan desde **Usuarios** en el panel.
+- `/player`, `/ws` y `/files` quedan abiertos en la LAN (los TV no tienen cómo loguearse). Para acceso remoto, exponer solo el panel por el túnel.
+- La autenticación está en `server.ts` (no en middleware de Next, que rompe las subidas grandes). Las sesiones se guardan hasheadas en Postgres y duran 30 días; hay límite de intentos de login por IP.
+
+## Instalación en Windows, respaldos y acceso remoto
+
+Ver `docs/WINDOWS.md` y `scripts/backup.sh`.
 
 ## Qué falta
 

@@ -32,7 +32,7 @@ export async function PATCH(req: Request, { params }: Ctx) {
 
   const [asset] = await db.update(mediaAssets).set(patch).where(eq(mediaAssets.id, id)).returning();
   if (!asset) return error("Archivo no encontrado", 404);
-  return json({ ...asset, url: publicUrl(asset.objectKey) });
+  return json({ ...asset, url: publicUrl(asset.objectKey), thumbnailUrl: asset.thumbnailKey ? publicUrl(asset.thumbnailKey) : null });
 }
 
 export async function DELETE(_req: Request, { params }: Ctx) {
@@ -40,6 +40,7 @@ export async function DELETE(_req: Request, { params }: Ctx) {
   const [asset] = await db.delete(mediaAssets).where(eq(mediaAssets.id, id)).returning();
   if (!asset) return error("Archivo no encontrado", 404);
   await minio.removeObject(BUCKET, asset.objectKey);
+  if (asset.thumbnailKey) await minio.removeObject(BUCKET, asset.thumbnailKey).catch(() => {});
   await refreshAll();
   return json({ ok: true });
 }

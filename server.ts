@@ -1,4 +1,4 @@
-import { createServer, request as httpRequest } from "node:http";
+import { createServer, request as httpRequest, type IncomingMessage } from "node:http";
 import { parse } from "node:url";
 import next from "next";
 import { WebSocketServer, type WebSocket } from "ws";
@@ -9,6 +9,7 @@ import postgres from "postgres";
 import { db } from "@/db";
 import { devices } from "@/db/schema";
 import { BUCKET, ensureBucket, minioHost, minioPort } from "@/lib/storage";
+import { cookieValue, ensureAdmin, operatorMayCall, userFromToken } from "@/lib/auth";
 import { attachDevice, createPairingCode, refreshAll, refreshDevice, send } from "@/lib/hub";
 import type { ClientMessage } from "@/lib/protocol";
 
@@ -24,7 +25,7 @@ async function runMigrations() {
 }
 
 /** /files/* se sirve desde MinIO a través de este servidor (con soporte de Range para videos). */
-function proxyToMinio(req: import("node:http").IncomingMessage, res: import("node:http").ServerResponse) {
+function proxyToMinio(req: IncomingMessage, res: import("node:http").ServerResponse) {
   const path = `/${BUCKET}${req.url!.slice("/files".length).split("?")[0]}`;
   const headers: Record<string, string> = {};
   for (const h of ["range", "if-none-match", "if-modified-since"]) {
@@ -48,21 +49,37 @@ function proxyToMinio(req: import("node:http").IncomingMessage, res: import("nod
 }
 
 /**
- * Autenticación básica para el panel y la API (se hace acá y no en un middleware de Next,
- * porque el middleware copia el cuerpo de la request y rompe las subidas de archivos grandes).
- * El reproductor (/player, /ws, /files) queda abierto en la LAN.
- * Si ADMIN_PASSWORD no está definido, el panel queda sin contraseña (solo desarrollo).
+ * Autenticación del panel y la API (acá y no en un middleware de Next, porque el middleware
+ * copia el cuerpo de la request y rompe las subidas de archivos grandes).
+ * Públicos en la LAN: el reproductor (/player, /ws, /files), /login y los archivos estáticos de Next.
  */
-function isAuthorized(req: import("node:http").IncomingMessage) {
-  const password = process.env.ADMIN_PASSWORD;
-  if (!password) return true;
+const PUBLIC_PREFIXES = ["/player", "/files/", "/login", "/api/auth/login", "/_next/", "/favicon"];
+
+type Access = { ok: true } | { ok: false; status: 401 | 403; redirect?: boolean };
+
+async function authorize(req: IncomingMessage): Promise<Access> {
   const path = req.url!.split("?")[0];
-  const protectedPath = path === "/" || path.startsWith("/dashboard") || path.startsWith("/api/");
-  if (!protectedPath) return true;
-  const [scheme, encoded] = (req.headers.authorization ?? "").split(" ");
-  if (scheme !== "Basic" || !encoded) return false;
-  const [user, ...rest] = Buffer.from(encoded, "base64").toString().split(":");
-  return user === (process.env.ADMIN_USER ?? "admin") && rest.join(":") === password;
+  const method = req.method ?? "GET";
+  const isApi = path.startsWith("/api/");
+  if (PUBLIC_PREFIXES.some((p) => path === p || path.startsWith(p))) return { ok: true };
+
+  // Defensa CSRF extra: las escrituras de la API tienen que venir del mismo sitio.
+  if (isApi && method !== "GET" && method !== "HEAD") {
+    const origin = req.headers.origin;
+    if (origin) {
+      try {
+        if (new URL(origin).host !== req.headers.host) return { ok: false, status: 403 };
+      } catch {
+        return { ok: false, status: 403 };
+      }
+    }
+  }
+
+  const user = await userFromToken(cookieValue(req.headers.cookie));
+  if (!user) return { ok: false, status: 401, redirect: !isApi };
+  if (user.role === "operator" && isApi && !operatorMayCall(method, path)) return { ok: false, status: 403 };
+  if (user.role === "operator" && path.startsWith("/dashboard/users")) return { ok: false, status: 403 };
+  return { ok: true };
 }
 
 function handleSocket(ws: WebSocket) {
@@ -100,17 +117,31 @@ function handleSocket(ws: WebSocket) {
 async function main() {
   await runMigrations();
   await ensureBucket();
+  await ensureAdmin();
   await app.prepare();
 
   const server = createServer((req, res) => {
     if (req.url?.startsWith("/files/") && (req.method === "GET" || req.method === "HEAD")) {
       return proxyToMinio(req, res);
     }
-    if (!isAuthorized(req)) {
-      res.writeHead(401, { "WWW-Authenticate": 'Basic realm="Carteleria"' }).end("Autenticación requerida");
-      return;
-    }
-    handle(req, res, parse(req.url!, true));
+    // IP del cliente para el límite de intentos de login. Se pisa el header para que no se pueda falsificar;
+    // solo se confía en cf-connecting-ip / x-forwarded-for cuando la conexión viene del túnel local.
+    const remote = req.socket.remoteAddress ?? "local";
+    const viaTunnel = remote === "127.0.0.1" || remote === "::1" || remote === "::ffff:127.0.0.1";
+    const forwarded = (req.headers["cf-connecting-ip"] as string | undefined) ?? (req.headers["x-forwarded-for"] as string | undefined)?.split(",")[0].trim();
+    req.headers["x-client-ip"] = viaTunnel && forwarded ? forwarded : remote;
+    authorize(req)
+      .then((access) => {
+        if (access.ok) return handle(req, res, parse(req.url!, true));
+        if (access.redirect) return void res.writeHead(302, { Location: "/login" }).end();
+        res.writeHead(access.status, { "content-type": "application/json" }).end(
+          JSON.stringify({ error: access.status === 401 ? "No autenticado" : "No tenés permiso para esto" }),
+        );
+      })
+      .catch((err) => {
+        console.error(err);
+        res.writeHead(500).end();
+      });
   });
 
   const wss = new WebSocketServer({ noServer: true });

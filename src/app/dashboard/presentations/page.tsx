@@ -61,6 +61,10 @@ const IconEye = () => (
 );
 
 function Thumb({ m }: { m: MediaDTO }) {
+  if (m.thumbnailUrl) {
+    // eslint-disable-next-line @next/next/no-img-element
+    return <img src={m.thumbnailUrl} alt="" loading="lazy" className="h-full w-full object-cover" />;
+  }
   return m.kind === "image" ? (
     // eslint-disable-next-line @next/next/no-img-element
     <img src={m.url} alt="" loading="lazy" className="h-full w-full object-contain" />
@@ -352,7 +356,13 @@ export default function PresentationsPage() {
                                     className="input w-20 py-1.5"
                                     type="number"
                                     min={1}
-                                    placeholder={it.asset.kind === "video" ? "auto" : "10"}
+                                    placeholder={
+                                      it.asset.kind === "video"
+                                        ? it.asset.durationSeconds != null
+                                          ? String(it.asset.durationSeconds)
+                                          : "auto"
+                                        : "10"
+                                    }
                                     value={it.durationSeconds ?? ""}
                                     onChange={(e) => setDuration(i, e.target.value)}
                                     aria-label="Duración en segundos"
