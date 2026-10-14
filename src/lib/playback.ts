@@ -27,6 +27,10 @@ async function presentationPlayItems(presentationId: string): Promise<{ items: P
     kind: asset.kind,
     durationSeconds: item.durationSeconds ?? (asset.kind === "image" ? DEFAULT_IMAGE_SECONDS : null),
     fit: item.fit === "cover" ? ("cover" as const) : ("contain" as const),
+    transition: item.transition,
+    rotation: item.rotation,
+    flipH: item.flipH,
+    flipV: item.flipV,
   }));
   return { items, style: p ?? DEFAULT_STYLE };
 }
@@ -83,7 +87,7 @@ async function resolveContent(deviceId: string, now: Date, timeZone: string): Pr
       return {
         source: "takeover",
         label: asset.originalName,
-        items: [{ id: asset.id, url: publicUrl(asset.objectKey), kind: asset.kind, durationSeconds: null, fit: "contain" }],
+        items: [{ id: asset.id, url: publicUrl(asset.objectKey), kind: asset.kind, durationSeconds: null, fit: "contain", transition: null, rotation: 0, flipH: false, flipV: false }],
         style: { orientation: portrait ? "portrait" : "landscape", transition: "cut" },
       };
     }

@@ -128,7 +128,7 @@
   function samePlaylist(a, b) {
     if (a.length !== b.length) return false;
     for (var i = 0; i < a.length; i++) {
-      if (a[i].id !== b[i].id || a[i].url !== b[i].url || a[i].durationSeconds !== b[i].durationSeconds || a[i].fit !== b[i].fit) return false;
+      if (a[i].id !== b[i].id || a[i].url !== b[i].url || a[i].durationSeconds !== b[i].durationSeconds || a[i].fit !== b[i].fit || a[i].transition !== b[i].transition || a[i].rotation !== b[i].rotation || a[i].flipH !== b[i].flipH || a[i].flipV !== b[i].flipV) return false;
     }
     return true;
   }
@@ -207,7 +207,16 @@
 
     // Reemplazo sin parpadeo: se agrega el nuevo elemento y luego se quita el anterior.
     var old = currentEl;
-    var fade = dissolve && old && playlist.length > 1;
+    var tr = item.transition || (dissolve ? 'dissolve' : 'cut');
+    var fade = tr === 'dissolve' && old && playlist.length > 1;
+    // Giro y espejo del elemento (en 90/270 se escala para que siga entrando en pantalla).
+    var rot = item.rotation || 0, fx = item.flipH ? -1 : 1, fy = item.flipV ? -1 : 1;
+    if (rot || fx < 0 || fy < 0) {
+      var sw = stage.offsetWidth || 1, sh = stage.offsetHeight || 1;
+      var sc = (rot === 90 || rot === 270) ? Math.min(sw / sh, sh / sw) : 1;
+      var tf = 'rotate(' + rot + 'deg) scale(' + (fx * sc) + ',' + (fy * sc) + ')';
+      el.style.webkitTransform = tf; el.style.transform = tf;
+    }
     if (fade) el.className += ' fade';
     stage.appendChild(el);
     currentEl = el;

@@ -70,6 +70,12 @@ export const presentationItems = pgTable(
     sectionName: text("section_name"),
     /** Cómo se ajusta a la pantalla: "contain" (entero) o "cover" (llena y recorta). */
     fit: text("fit").notNull().default("contain"),
+    /** Transición propia de este elemento; null = la de la presentación. */
+    transition: transitionKind("transition"),
+    /** Giro (0/90/180/270) y espejo del elemento. */
+    rotation: smallint("rotation").notNull().default(0),
+    flipH: boolean("flip_h").notNull().default(false),
+    flipV: boolean("flip_v").notNull().default(false),
     position: integer("position").notNull(),
     /** Duración para imágenes. Los videos usan su duración real si es null. */
     durationSeconds: integer("duration_seconds"),

@@ -15,11 +15,12 @@ type Hub = {
   devices: Map<string, Set<WebSocket>>;
   pending: Map<string, { ws: WebSocket; expiresAt: number }>;
   lastSent: WeakMap<WebSocket, string>;
+  screens: WeakMap<WebSocket, { w: unknown; h: unknown }>;
 };
 
 const g = globalThis as unknown as { __hub?: Hub };
 export const hub: Hub =
-  g.__hub ?? (g.__hub = { devices: new Map(), pending: new Map(), lastSent: new WeakMap() });
+  g.__hub ?? (g.__hub = { devices: new Map(), pending: new Map(), lastSent: new WeakMap(), screens: new WeakMap() });
 
 const PAIRING_TTL_MS = 10 * 60 * 1000;
 
@@ -44,14 +45,13 @@ export function takePendingSocket(code: string) {
   return p.ws;
 }
 
-const screens = new WeakMap<WebSocket, { w: unknown; h: unknown }>();
 /** Recuerda la resolución del hello (sirve para pantallas que todavía no están vinculadas). */
 export function rememberScreen(ws: WebSocket, w: unknown, h: unknown) {
-  screens.set(ws, { w, h });
+  hub.screens.set(ws, { w, h });
 }
 
 export function attachDevice(deviceId: string, ws: WebSocket) {
-  const scr = screens.get(ws);
+  const scr = hub.screens.get(ws);
   if (scr) void recordScreen(deviceId, scr.w, scr.h);
   ws.on("message", (data) => {
     try {

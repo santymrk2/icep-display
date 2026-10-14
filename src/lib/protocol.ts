@@ -8,6 +8,11 @@ export type PlayItem = {
   durationSeconds: number | null;
   /** "contain" muestra entero; "cover" llena la pantalla recortando. */
   fit: "contain" | "cover";
+  /** null = la transición de la presentación. */
+  transition: "cut" | "dissolve" | null;
+  rotation: number;
+  flipH: boolean;
+  flipV: boolean;
 };
 
 /** Cómo se muestra el contenido en esta pantalla. */

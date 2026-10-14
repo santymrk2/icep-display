@@ -27,6 +27,10 @@ export async function GET(_req: Request, { params }: Ctx) {
             mediaAssetId: asset.id,
             durationSeconds: item.durationSeconds,
             fit: item.fit,
+            transition: item.transition,
+            rotation: item.rotation,
+            flipH: item.flipH,
+            flipV: item.flipV,
             asset: { ...asset, url: publicUrl(asset.objectKey), thumbnailUrl: asset.thumbnailKey ? publicUrl(asset.thumbnailKey) : null },
           }
         : { type: "section" as const, name: item.sectionName ?? "Sección" },
@@ -42,7 +46,7 @@ export async function PUT(req: Request, { params }: Ctx) {
     description?: string | null;
     orientation?: string;
     transition?: string;
-    items: ({ type?: "media"; mediaAssetId: string; durationSeconds: number | null; fit?: string } | { type: "section"; name: string })[];
+    items: ({ type?: "media"; mediaAssetId: string; durationSeconds: number | null; fit?: string; transition?: string | null; rotation?: number; flipH?: boolean; flipV?: boolean } | { type: "section"; name: string })[];
   };
   if (!body.name?.trim()) return error("Falta el nombre");
   if (body.orientation !== undefined && body.orientation !== "landscape" && body.orientation !== "portrait") return error("Orientación inválida");
@@ -70,6 +74,10 @@ export async function PUT(req: Request, { params }: Ctx) {
                 mediaAssetId: it.mediaAssetId,
                 position,
                 fit: it.fit === "cover" ? "cover" : "contain",
+                transition: (it.transition === "cut" || it.transition === "dissolve" ? it.transition : null) as "cut" | "dissolve" | null,
+                rotation: it.rotation === 90 || it.rotation === 180 || it.rotation === 270 ? it.rotation : 0,
+                flipH: it.flipH === true,
+                flipV: it.flipV === true,
                 durationSeconds: it.durationSeconds && it.durationSeconds > 0 ? Math.round(it.durationSeconds) : null,
               },
         ),
