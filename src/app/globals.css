@@ -30,7 +30,7 @@ body {
 .card {
   @apply rounded-xl border border-line bg-panel;
 }
-/* Tabla estilo ProDisplay: caja con borde, encabezado más claro. */
+/* Tabla estilo la referencia de diseño: caja con borde, encabezado más claro. */
 .table-shell {
   @apply overflow-hidden rounded-xl border border-line;
 }

@@ -852,7 +852,7 @@ export default function PresentationsPage() {
         </aside>
       </div>
 
-      {/* Drawer de detalle del medio (estilo ProDisplay) */}
+      {/* Drawer de detalle del medio (estilo la referencia de diseño) */}
       {current && detail && (
         <aside className="drawer" role="dialog" aria-label="Detalle del elemento">
           <div className="mb-4 flex items-center justify-between gap-3">
