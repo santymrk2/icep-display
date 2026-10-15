@@ -189,6 +189,8 @@ export const meetingTypes = pgTable("meeting_types", {
   presentationId: uuid("presentation_id").references(() => presentations.id, { onDelete: "set null" }),
   /** null = el primer calendario. */
   calendarId: uuid("calendar_id").references(() => calendars.id, { onDelete: "set null" }),
+  /** Hora de inicio si en Notion la reunión tiene solo fecha ("HH:MM:SS"); null = se ignora. */
+  defaultStartTime: time("default_start_time"),
   minutesBefore: integer("minutes_before").notNull().default(60),
   minutesAfter: integer("minutes_after").notNull().default(150),
   enabled: boolean("enabled").notNull().default(true),

@@ -41,12 +41,17 @@ const state: State =
 
 /** Acepta el ID de la base o el link completo de Notion. */
 function databaseId() {
-  const raw = process.env.NOTION_DATABASE_ID?.trim() ?? "";
+  const raw = (process.env.NOTION_DATABASE_ID || process.env.DATABASE_ID)?.trim() ?? "";
   const m = /([0-9a-f]{32})|([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i.exec(raw.split("?")[0]);
   return m ? m[0].replace(/-/g, "") : null;
 }
 
-export const notionConfigured = () => !!process.env.NOTION_TOKEN?.trim() && !!databaseId();
+/** Acepta también los nombres que usa la página web de la iglesia (NOTION_API_KEY, DATABASE_ID). */
+const token = () => (process.env.NOTION_TOKEN || process.env.NOTION_API_KEY)?.trim() ?? "";
+export const notionConfigured = () => !!token() && !!databaseId();
+/** Propiedades de la base de la iglesia (las que usa la página web); se pueden cambiar por variables de entorno. */
+const DATE_PROPERTY = () => process.env.NOTION_DATE_PROPERTY?.trim() || "Fecha";
+const TYPE_PROPERTY = () => process.env.NOTION_TYPE_PROPERTY?.trim() || "Tipo de Reunión";
 const daysAhead = () => Math.min(Math.max(Number(process.env.NOTION_DAYS_AHEAD) || 60, 7), 365);
 const syncMinutes = () => Math.min(Math.max(Number(process.env.NOTION_SYNC_MINUTES) || 10, 1), 24 * 60);
 
@@ -57,7 +62,7 @@ async function notion<T>(path: string, body: unknown): Promise<T> {
   const res = await fetch(`https://api.notion.com/v1${path}`, {
     method: "POST",
     headers: {
-      authorization: `Bearer ${process.env.NOTION_TOKEN!.trim()}`,
+      authorization: `Bearer ${token()}`,
       "notion-version": NOTION_VERSION,
       "content-type": "application/json",
     },
@@ -78,14 +83,14 @@ const plain = (v: unknown) => (Array.isArray(v) ? v.map((t: { plain_text?: strin
 /** Elige las propiedades a usar: las de las variables de entorno o, si no, las primeras de cada tipo. */
 function pickProps(page: NotionPage) {
   const entries = Object.entries(page.properties);
-  const byName = (env: string | undefined) => (env?.trim() && page.properties[env.trim()] ? env.trim() : null);
+  const byName = (name: string) => (page.properties[name] ? name : null);
   const first = (...types: string[]) => entries.find(([, p]) => types.includes(p.type))?.[0] ?? null;
   const title = first("title");
   return {
     title,
-    date: byName(process.env.NOTION_DATE_PROPERTY) ?? first("date"),
+    date: byName(DATE_PROPERTY()) ?? first("date"),
     // Sin propiedad de tipo, el tipo es el título de la reunión.
-    type: byName(process.env.NOTION_TYPE_PROPERTY) ?? first("select", "status", "multi_select") ?? title,
+    type: byName(TYPE_PROPERTY()) ?? first("select", "status", "multi_select") ?? title,
   };
 }
 
@@ -110,11 +115,12 @@ function propText(p: NotionProp | undefined): string {
 
 /**
  * Fecha y hora de inicio "de pared" en la zona del sistema. Notion manda "2026-10-14T20:00:00.000-03:00"
- * (con desfase) o "2026-10-14" (sin hora: no sirve, no sabemos cuándo empieza).
+ * (con desfase) o "2026-10-14" (sin hora: minutes = null, se usa la hora por defecto del tipo).
  */
-function startOf(p: NotionProp | undefined, timeZone: string): { date: string; minutes: number } | null {
+function startOf(p: NotionProp | undefined, timeZone: string): { date: string; minutes: number | null } | null {
   const start = (p?.type === "date" ? (p.date as { start?: string } | null)?.start : null) ?? null;
-  if (!start || !start.includes("T")) return null;
+  if (!start) return null;
+  if (!start.includes("T")) return /^\d{4}-\d{2}-\d{2}$/.test(start) ? { date: start, minutes: null } : null;
   const hasOffset = /([+-]\d{2}:?\d{2}|Z)$/.test(start);
   if (!hasOffset) {
     // Sin desfase, Notion indica la hora tal cual en su time_zone; la tomamos como hora local.
@@ -127,6 +133,7 @@ function startOf(p: NotionProp | undefined, timeZone: string): { date: string; m
   return { date: z.date, minutes: h * 60 + m };
 }
 
+const toMinutes = (t: string) => Number(t.slice(0, 2)) * 60 + Number(t.slice(3, 5));
 const fmt = (min: number) => `${String(Math.floor(min / 60)).padStart(2, "0")}:${String(min % 60).padStart(2, "0")}`;
 const dowBit = (date: string) => 1 << new Date(`${date}T12:00:00Z`).getUTCDay();
 
@@ -146,12 +153,10 @@ async function run(): Promise<SyncStatus> {
     // Todas las páginas de la base en el rango. Se detecta la propiedad de fecha con la primera página.
     const pages: NotionPage[] = [];
     let cursor: string | undefined;
-    let dateProp = process.env.NOTION_DATE_PROPERTY?.trim() || null;
-    if (!dateProp) {
-      const probe = await notion<{ results: NotionPage[] }>(`/databases/${databaseId()}/query`, { page_size: 1 });
-      dateProp = probe.results[0] ? pickProps(probe.results[0]).date : null;
-      if (probe.results[0] && !dateProp) throw new Error("La base de Notion no tiene una propiedad de fecha");
-    }
+    // Se mira una página para confirmar la propiedad de fecha ("Fecha") o detectar otra.
+    const probe = await notion<{ results: NotionPage[] }>(`/databases/${databaseId()}/query`, { page_size: 1 });
+    const dateProp = probe.results[0] ? pickProps(probe.results[0]).date : null;
+    if (probe.results[0] && !dateProp) throw new Error("La base de Notion no tiene una propiedad de fecha");
     if (dateProp) {
       do {
         const r = await notion<{ results: NotionPage[]; has_more: boolean; next_cursor: string | null }>(`/databases/${databaseId()}/query`, {
@@ -178,7 +183,7 @@ async function run(): Promise<SyncStatus> {
       status.meetings++;
       const skip = (reason: string) => status.skipped.push({ title: title || typeName || "(sin título)", date: start?.date ?? null, reason });
       if (!start) {
-        skip("No tiene hora de inicio");
+        skip("No tiene fecha");
         continue;
       }
       if (!typeName) {
@@ -203,15 +208,22 @@ async function run(): Promise<SyncStatus> {
         continue;
       }
 
+      // Sin hora en Notion se usa la hora habitual del tipo (como hace la página web).
+      const startMin = start.minutes ?? (type.defaultStartTime ? toMinutes(type.defaultStartTime) : null);
+      if (startMin === null) {
+        skip(`No tiene hora y el tipo "${type.name}" no tiene hora habitual`);
+        continue;
+      }
       // Se recorta al mismo día: el calendario no tiene eventos que crucen la medianoche.
-      const begin = Math.max(0, start.minutes - type.minutesBefore);
-      const end = Math.min(23 * 60 + 59, start.minutes + type.minutesAfter);
+      const begin = Math.max(0, startMin - type.minutesBefore);
+      const end = Math.min(23 * 60 + 59, startMin + type.minutesAfter);
       if (end <= begin) {
         skip("El horario queda vacío con los minutos configurados");
         continue;
       }
       const values = {
-        name: title || type.name,
+        // El tipo es lo que identifica la reunión (la web tampoco usa el título).
+        name: type.name,
         presentationId: type.presentationId,
         calendarId,
         groupId: null,

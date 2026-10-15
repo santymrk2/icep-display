@@ -51,15 +51,13 @@ Si cambiás `src/db/schema.ts`: `npm run db:generate` y se aplica al reiniciar.
 
 Las reuniones de la base de Notion de la iglesia se pasan solas al calendario (`src/lib/notion.ts`).
 
-1. Crear una integración interna en https://www.notion.so/profile/integrations y copiar su token.
-2. En la base de reuniones de Notion: `···` → Conexiones → agregar esa integración.
-3. En el `.env` del servidor completar `NOTION_TOKEN` y `NOTION_DATABASE_ID` (el link de la base sirve tal cual) y reiniciar: `docker compose up -d`.
-4. En **Ajustes → Reuniones** aparecen los tipos de reunión que hay en Notion. Para cada uno se elige la presentación, cuántos minutos antes de la hora de inicio empieza a mostrarse y cuántos minutos después termina (Notion solo trae el inicio). Sin presentación no se crean eventos de ese tipo.
+1. En el `.env` del servidor completar `NOTION_TOKEN` y `NOTION_DATABASE_ID` con los mismos valores que usa la página web de la iglesia (`NOTION_API_KEY` y `DATABASE_ID` de icep-website; el link de la base también sirve) y reiniciar: `docker compose up -d`.
+2. En **Ajustes → Reuniones** están los tipos de reunión (vienen cargados los de la web y los nuevos de Notion aparecen solos). Para cada uno se elige la presentación, la hora habitual (para reuniones que en Notion tienen solo fecha), cuántos minutos antes empieza a mostrarse y cuántos minutos después del inicio termina. Sin presentación no se crean eventos de ese tipo.
 
 - El servidor consulta Notion cada `NOTION_SYNC_MINUTES` (10 por defecto) y trae las reuniones desde ayer hasta `NOTION_DAYS_AHEAD` días (60). También hay un botón "Sincronizar ahora".
 - Cada reunión es un evento único en el calendario del tipo (o el primero), para todas sus pantallas. Si en Notion cambia el horario o el tipo, el evento se actualiza; si se borra, se borra.
 - Los eventos de Notion no se editan desde el calendario (se pisarían en la próxima sincronización).
-- La fecha se toma de la primera propiedad de tipo fecha y el tipo de la primera de selección/estado (si no hay, el título). Para elegir otras: `NOTION_DATE_PROPERTY` y `NOTION_TYPE_PROPERTY`. Las reuniones sin hora (solo fecha) se ignoran y se listan en Ajustes.
+- Se leen las propiedades `Fecha` y `Tipo de Reunión`, igual que la web (se cambian con `NOTION_DATE_PROPERTY` y `NOTION_TYPE_PROPERTY`). Si una reunión tiene solo fecha se usa la hora habitual del tipo; si el tipo no tiene, la reunión se lista en Ajustes y no se crea el evento.
 - Si con los minutos el horario pasa la medianoche, se corta en 00:00 / 23:59.
 
 ## Compatibilidad con TVs

@@ -16,6 +16,7 @@ export async function PATCH(req: Request, { params }: Ctx) {
   const body = (await req.json().catch(() => ({}))) as {
     presentationId?: string | null;
     calendarId?: string | null;
+    defaultStartTime?: string | null;
     minutesBefore?: number;
     minutesAfter?: number;
     enabled?: boolean;
@@ -36,6 +37,11 @@ export async function PATCH(req: Request, { params }: Ctx) {
       if (!c) return error("El calendario no existe");
     }
     patch.calendarId = body.calendarId;
+  }
+  if (body.defaultStartTime !== undefined) {
+    if (body.defaultStartTime !== null && (typeof body.defaultStartTime !== "string" || !/^([01]\d|2[0-3]):[0-5]\d$/.test(body.defaultStartTime)))
+      return error("Hora habitual inválida (HH:MM)");
+    patch.defaultStartTime = body.defaultStartTime;
   }
   if (body.minutesBefore !== undefined) {
     if (!minutes(body.minutesBefore)) return error("Los minutos antes deben estar entre 0 y 1440");

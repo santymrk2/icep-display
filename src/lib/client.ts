@@ -122,6 +122,8 @@ export type MeetingTypeDTO = {
   name: string;
   presentationId: string | null;
   calendarId: string | null;
+  /** Hora si en Notion la reunión no tiene hora ("HH:MM:SS"). */
+  defaultStartTime: string | null;
   minutesBefore: number;
   minutesAfter: number;
   enabled: boolean;

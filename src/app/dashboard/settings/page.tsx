@@ -395,7 +395,7 @@ function MediaPickerModal({ onClose, onPick }: { onClose: () => void; onPick: (i
 /* ------------------------------------------------------------------ Reuniones (Notion) */
 
 type MeetingsView = { status: NotionSyncDTO; types: MeetingTypeDTO[] };
-type MeetingPatch = Partial<Pick<MeetingTypeDTO, "presentationId" | "calendarId" | "minutesBefore" | "minutesAfter" | "enabled">>;
+type MeetingPatch = Partial<Pick<MeetingTypeDTO, "presentationId" | "calendarId" | "defaultStartTime" | "minutesBefore" | "minutesAfter" | "enabled">>;
 
 const fmtClock = (min: number) => {
   const m = Math.min(Math.max(min, 0), 23 * 60 + 59);
@@ -526,17 +526,18 @@ function MeetingsTab({ run }: { run: RunFn }) {
         <div className="space-y-1">
           <h2 className="text-lg font-semibold">Tipos de reunión</h2>
           <p className="text-sm text-zinc-400">
-            Notion solo trae la hora de inicio. Para cada tipo elegí qué presentación se muestra, cuántos minutos antes empieza y cuántos minutos después del inicio termina. Los tipos
+            Notion solo trae la hora de inicio. Para cada tipo elegí qué presentación se muestra, cuántos minutos antes empieza y cuántos minutos después del inicio termina. La hora habitual se usa cuando en Notion la reunión tiene solo la fecha. Los tipos
             nuevos de Notion aparecen solos; sin presentación no se crean eventos.
           </p>
         </div>
 
         <div className="table-shell overflow-x-auto">
-          <table className="min-w-[860px]">
+          <table className="min-w-[980px]">
             <thead>
               <tr>
                 <th>Tipo</th>
                 <th>Presentación</th>
+                <th title="Se usa cuando en Notion la reunión tiene solo la fecha">Hora habitual</th>
                 <th>Empieza antes</th>
                 <th>Termina después</th>
                 <th>Calendario</th>
@@ -547,7 +548,7 @@ function MeetingsTab({ run }: { run: RunFn }) {
             <tbody>
               {types.length === 0 && (
                 <tr>
-                  <td colSpan={7} className="py-12 text-center text-zinc-500">
+                  <td colSpan={8} className="py-12 text-center text-zinc-500">
                     {status.configured ? "Todavía no hay tipos: sincronizá para traerlos de Notion" : "Los tipos aparecen al conectar Notion, o agregalos a mano abajo"}
                   </td>
                 </tr>
@@ -594,8 +595,9 @@ function MeetingRow({
     if (!Number.isInteger(n) || n === t[key]) return key === "minutesBefore" ? setBefore(String(t.minutesBefore)) : setAfter(String(t.minutesAfter));
     onChange({ [key]: n });
   };
-  // Ejemplo con una reunión a las 20:00 para ver el efecto de los minutos.
-  const example = `Si empieza 20:00: ${fmtClock(20 * 60 - (Number(before) || 0))} a ${fmtClock(20 * 60 + (Number(after) || 0))}`;
+  // Ejemplo con la hora habitual (o 20:00) para ver el efecto de los minutos.
+  const base = t.defaultStartTime ? Number(t.defaultStartTime.slice(0, 2)) * 60 + Number(t.defaultStartTime.slice(3, 5)) : 20 * 60;
+  const example = `Si empieza ${fmtClock(base)}: ${fmtClock(base - (Number(before) || 0))} a ${fmtClock(base + (Number(after) || 0))}`;
 
   return (
     <tr className={t.enabled ? "" : "opacity-50"}>
@@ -614,6 +616,19 @@ function MeetingRow({
             </option>
           ))}
         </select>
+      </td>
+      <td>
+        <input
+          type="time"
+          className="input w-28"
+          defaultValue={t.defaultStartTime?.slice(0, 5) ?? ""}
+          key={t.defaultStartTime ?? ""}
+          aria-label={`Hora habitual de ${t.name}`}
+          onBlur={(e) => {
+            const v = e.target.value || null;
+            if (v !== (t.defaultStartTime?.slice(0, 5) ?? null)) onChange({ defaultStartTime: v });
+          }}
+        />
       </td>
       <td>
         <label className="flex items-center gap-2">
