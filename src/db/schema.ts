@@ -1,6 +1,7 @@
 import { sql } from "drizzle-orm";
 import {
   pgTable,
+  type AnyPgColumn,
   uuid,
   text,
   integer,
@@ -26,6 +27,8 @@ export const userRole = pgEnum("user_role", ["admin", "operator"]);
 export const mediaFolders = pgTable("media_folders", {
   id: uuid("id").primaryKey().defaultRandom(),
   name: text("name").notNull(),
+  /** Carpeta que la contiene; null = raíz ("Mi biblioteca"). */
+  parentId: uuid("parent_id").references((): AnyPgColumn => mediaFolders.id, { onDelete: "set null" }),
   /** Color del ícono de la carpeta (hex). */
   color: text("color").notNull().default("#3b82f6"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),

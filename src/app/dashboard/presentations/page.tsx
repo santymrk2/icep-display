@@ -782,7 +782,7 @@ export default function PresentationsPage() {
     .sort((a, b) =>
       mSort === "name" ? a.originalName.localeCompare(b.originalName) : mSort === "oldest" ? a.uploadedAt.localeCompare(b.uploadedAt) : b.uploadedAt.localeCompare(a.uploadedAt),
     );
-  const shownFolders = mq || mFolderId ? [] : mFolders;
+  const shownFolders = mq ? [] : mFolders.filter((f) => f.parentId === mFolderId);
   const currentMFolder = mFolders.find((f) => f.id === mFolderId);
   const sideOpen = addOpen || (current !== null && detail !== null);
 
@@ -1306,7 +1306,7 @@ export default function PresentationsPage() {
         <aside className="drawer flex !max-w-[26rem] flex-col !p-0" role="dialog" aria-label="Agregar medios">
           <div className="relative flex items-center justify-center gap-2 px-5 py-4">
             {currentMFolder && (
-              <button className="absolute left-4 flex items-center gap-1 text-sm text-accent" onClick={() => setMFolderId(null)}>
+              <button className="absolute left-4 flex items-center gap-1 text-sm text-accent" onClick={() => setMFolderId(currentMFolder.parentId)}>
                 <IconChevronLeft size={16} />
                 Atrás
               </button>
