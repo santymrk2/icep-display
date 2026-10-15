@@ -94,6 +94,8 @@ export const presentationItems = pgTable(
     rotation: smallint("rotation").notNull().default(0),
     flipH: boolean("flip_h").notNull().default(false),
     flipV: boolean("flip_v").notNull().default(false),
+    /** Videos: reproducir con sonido (si el navegador de la pantalla lo permite). */
+    sound: boolean("sound").notNull().default(false),
     position: integer("position").notNull(),
     /** Duración para imágenes. Los videos usan su duración real si es null. */
     durationSeconds: integer("duration_seconds"),

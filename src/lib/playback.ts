@@ -35,6 +35,7 @@ async function presentationPlayItems(presentationId: string): Promise<{ items: P
     rotation: item.rotation,
     flipH: item.flipH,
     flipV: item.flipV,
+    sound: item.sound,
   }));
   return { items, style: p ? { orientation: p.orientation, transition: p.transition } : DEFAULT_STYLE };
 }
@@ -94,7 +95,7 @@ async function resolveContent(deviceId: string, now: Date, timeZone: string): Pr
       return {
         source: "takeover",
         label: asset.originalName,
-        items: [{ id: asset.id, url: publicUrl(asset.objectKey), kind: asset.kind, durationSeconds: null, fit: "contain", transition: null, rotation: 0, flipH: false, flipV: false }],
+        items: [{ id: asset.id, url: publicUrl(asset.objectKey), kind: asset.kind, durationSeconds: null, fit: "contain", transition: null, rotation: 0, flipH: false, flipV: false, sound: false }],
         style: { orientation: portrait ? "portrait" : "landscape", transition: "cut" },
       };
     }

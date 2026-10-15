@@ -25,6 +25,8 @@ type MediaRow = {
   rotation: Rotation;
   flipH: boolean;
   flipV: boolean;
+  /** Videos: con sonido. */
+  sound: boolean;
   asset: MediaDTO;
 };
 /** "collapsed" es solo de la interfaz: no se envía al servidor. */
@@ -51,6 +53,7 @@ type ApiItem =
       rotation?: number;
       flipH?: boolean;
       flipV?: boolean;
+      sound?: boolean;
       asset: MediaDTO;
     }
   | { type: "section"; name: string };
@@ -99,6 +102,7 @@ function hydrate(d: ApiDetail): Detail {
             rotation: normRotation(it.rotation),
             flipH: !!it.flipH,
             flipV: !!it.flipV,
+            sound: !!it.sound,
             asset: it.asset,
           },
     ),
@@ -590,6 +594,7 @@ export default function PresentationsPage() {
         rotation: 0,
         flipH: false,
         flipV: false,
+        sound: false,
         asset: m,
       }),
     );
@@ -760,6 +765,7 @@ export default function PresentationsPage() {
                 rotation: it.rotation,
                 flipH: it.flipH,
                 flipV: it.flipV,
+                sound: it.sound,
               },
         ),
       }),
@@ -1576,6 +1582,12 @@ export default function PresentationsPage() {
                   <option value="270">270°</option>
                 </select>
               </label>
+              {detail.asset.kind === "video" && (
+                <div className="flex items-center justify-between gap-3">
+                  <span title="Algunas pantallas no permiten audio automático; ahí el video se reproduce sin sonido">Sonido</span>
+                  <Toggle checked={detail.sound} onChange={(v) => patchMedia(detail.uid, { sound: v })} label="Sonido" />
+                </div>
+              )}
               <div className="flex items-center justify-between gap-3">
                 <span>Espejo horizontal</span>
                 <Toggle checked={detail.flipH} onChange={(v) => patchMedia(detail.uid, { flipH: v })} label="Espejo horizontal" />

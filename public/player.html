@@ -128,7 +128,7 @@
   function samePlaylist(a, b) {
     if (a.length !== b.length) return false;
     for (var i = 0; i < a.length; i++) {
-      if (a[i].id !== b[i].id || a[i].url !== b[i].url || a[i].durationSeconds !== b[i].durationSeconds || a[i].fit !== b[i].fit || a[i].transition !== b[i].transition || a[i].rotation !== b[i].rotation || a[i].flipH !== b[i].flipH || a[i].flipV !== b[i].flipV) return false;
+      if (a[i].id !== b[i].id || a[i].url !== b[i].url || a[i].durationSeconds !== b[i].durationSeconds || a[i].fit !== b[i].fit || a[i].transition !== b[i].transition || a[i].rotation !== b[i].rotation || a[i].flipH !== b[i].flipH || a[i].flipV !== b[i].flipV || a[i].sound !== b[i].sound) return false;
     }
     return true;
   }
@@ -165,8 +165,10 @@
     playCurrent();
   }
 
-  function advance(gen) {
-    if (gen !== generation) return;
+  // Cada diapositiva tiene su número: un aviso viejo (timer, fin de video, error) no puede saltar la siguiente.
+  var slide = 0;
+  function advance(gen, my) {
+    if (gen !== generation || my !== slide) return;
     index = (index + 1) % playlist.length;
     playCurrent();
   }
@@ -176,7 +178,10 @@
   }
 
   function playCurrent() {
+    if (currentTimer) { clearTimeout(currentTimer); currentTimer = null; }
     var gen = generation;
+    var my = ++slide;
+    function next() { advance(gen, my); }
     var item = playlist[index];
     var single = playlist.length === 1;
     var el;
@@ -184,24 +189,29 @@
     if (item.kind === 'image') {
       el = document.createElement('img');
       el.className = 'media' + (item.fit === 'cover' ? ' cover' : '');
-      el.onerror = function () { currentTimer = setTimeout(function () { advance(gen); }, 2000); };
+      el.onerror = function () { currentTimer = setTimeout(next, 2000); };
       el.src = item.url;
     } else {
       el = document.createElement('video');
       el.className = 'media' + (item.fit === 'cover' ? ' cover' : '');
-      el.muted = true;
-      el.defaultMuted = true;
-      el.setAttribute('muted', '');
+      var withSound = !!item.sound;
+      el.muted = !withSound;
+      el.defaultMuted = !withSound;
+      if (!withSound) el.setAttribute('muted', '');
       el.setAttribute('playsinline', '');
       el.setAttribute('webkit-playsinline', '');
       el.autoplay = true;
-      el.loop = single;
-      el.onended = function () { advance(gen); };
-      el.onerror = function () { currentTimer = setTimeout(function () { advance(gen); }, 2000); };
+      // Con duración propia el video se repite hasta cumplirla; si no, se ve una vez entero.
+      el.loop = single || !!item.durationSeconds;
+      el.onended = next;
+      el.onerror = function () { currentTimer = setTimeout(next, 2000); };
       el.src = item.url;
       var p = null;
       try { p = el.play(); } catch (e) {}
-      if (p && p.catch) p.catch(function () {});
+      if (p && p.catch) p.catch(function () {
+        // El navegador no deja reproducir con sonido sin interacción: seguir silenciado.
+        if (!el.muted) { el.muted = true; try { el.play(); } catch (e) {} }
+      });
       watchStall(el, gen);
     }
 
@@ -235,9 +245,9 @@
     }
 
     if (item.kind === 'image') {
-      if (!single) currentTimer = setTimeout(function () { advance(gen); }, (item.durationSeconds || 10) * 1000);
+      if (!single) currentTimer = setTimeout(next, (item.durationSeconds || 10) * 1000);
     } else if (item.durationSeconds && !single) {
-      currentTimer = setTimeout(function () { advance(gen); }, item.durationSeconds * 1000);
+      currentTimer = setTimeout(next, item.durationSeconds * 1000);
     }
     if (!single) preload(playlist[(index + 1) % playlist.length]);
   }
@@ -251,7 +261,7 @@
       if (video.currentTime === last) stuck++; else { stuck = 0; last = video.currentTime; }
       if (stuck >= 4) {
         clearInterval(iv);
-        if (playlist.length > 1) advance(gen); else { try { video.load(); video.play(); } catch (e) {} watchStall(video, gen); }
+        if (playlist.length > 1) advance(gen, slide); else { try { video.load(); video.play(); } catch (e) {} watchStall(video, gen); }
       }
     }, 5000);
   }

@@ -1,5 +1,5 @@
 {
-  "id": "d1745178-782a-43c9-9a0f-e773d3ccb5d5",
+  "id": "4351cc93-32a5-4334-9f96-00ddcea2138a",
   "prevId": "2e66e95d-a06b-4e29-b93e-da6bd7bcf4aa",
   "version": "7",
   "dialect": "postgresql",
@@ -475,6 +475,13 @@
         },
         "flip_v": {
           "name": "flip_v",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "sound": {
+          "name": "sound",
           "type": "boolean",
           "primaryKey": false,
           "notNull": true,

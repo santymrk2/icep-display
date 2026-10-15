@@ -1,1 +1,0 @@
-ALTER TABLE "presentations" ADD COLUMN "default_duration_seconds" integer;
