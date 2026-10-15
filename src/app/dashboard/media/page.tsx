@@ -3,10 +3,43 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { api, formatBytes, type DeviceDTO, type FolderDTO, type MediaDTO } from "@/lib/client";
+import { toast } from "sonner";
 import { IconClose, IconFolder, IconMedia, IconPlus, IconSearch } from "@/components/Icons";
+import { useDialogs } from "@/components/Dialogs";
 
 type Upload = { name: string; progress: number; error?: string };
-type Flash = { error: boolean; text: string };
+const UPLOAD_TOAST = "media-upload";
+
+/** Contenido del aviso flotante mientras se suben archivos. */
+function UploadToast({ uploads }: { uploads: Upload[] }) {
+  const done = uploads.filter((u) => u.progress >= 1 || u.error).length;
+  return (
+    <div className="w-[356px] rounded-xl border border-line bg-panel text-sm text-zinc-100 shadow-2xl">
+      <div className="border-b border-line px-4 py-2.5 font-medium">
+        Subiendo {done}/{uploads.length} {uploads.length === 1 ? "archivo" : "archivos"}
+      </div>
+      <ul className="max-h-60 divide-y divide-line overflow-auto">
+        {uploads.map((u, i) => (
+          <li key={i} className="space-y-1.5 px-4 py-2.5">
+            <div className="flex items-center gap-3">
+              <span className="min-w-0 flex-1 truncate">{u.name}</span>
+              {u.error ? (
+                <span className="text-red-400">Error</span>
+              ) : (
+                <span className="tabular-nums text-zinc-400">{Math.round(u.progress * 100)}%</span>
+              )}
+            </div>
+            {!u.error && (
+              <div className="h-1 overflow-hidden rounded-full bg-raised">
+                <div className="h-full bg-accent transition-[width]" style={{ width: `${u.progress * 100}%` }} />
+              </div>
+            )}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
 /** Menú de acciones de una fila. key = "a:<assetId>" o "f:<folderId>". */
 type Menu = { key: string; view: "main" | "move" | "color"; top: number; right: number };
 /** Datos que se miden en el navegador antes de subir el archivo. */
@@ -186,7 +219,7 @@ export default function MediaPage() {
   const [bulkMove, setBulkMove] = useState(false);
   const [menu, setMenu] = useState<Menu | null>(null);
   const [inspectId, setInspectId] = useState<string | null>(null);
-  const [flash, setFlash] = useState<Flash | null>(null);
+  const dialogs = useDialogs();
   const fileInput = useRef<HTMLInputElement>(null);
   const dragDepth = useRef(0);
 
@@ -197,18 +230,17 @@ export default function MediaPage() {
   }, []);
 
   useEffect(() => {
-    load().catch((err: Error) => setFlash({ error: true, text: err.message }));
+    load().catch((err: Error) => toast.error(err.message));
     void api<DeviceDTO[]>("/api/devices").then(setDevices).catch(() => {});
   }, [load]);
 
   /** Ejecuta una acción mostrando el resultado o el error en el aviso superior. */
   async function run(fn: () => Promise<string | void>) {
-    setFlash(null);
     try {
       const ok = await fn();
-      if (ok) setFlash({ error: false, text: ok });
+      if (ok) toast.success(ok);
     } catch (err) {
-      setFlash({ error: true, text: (err as Error).message });
+      toast.error((err as Error).message);
     }
   }
 
@@ -224,6 +256,7 @@ export default function MediaPage() {
     if (list.length === 0) return;
     const dest = folderId; // la carpeta donde se soltó, aunque el usuario navegue después
     setUploads(list.map((f) => ({ name: f.name, progress: 0 })));
+    let failed: Upload[] = [];
     // De a uno para no saturar la red con varios 4K en paralelo.
     for (const [i, f] of list.entries()) {
       const setItem = (patch: Partial<Upload>) => setUploads((u) => u.map((x, j) => (j === i ? { ...x, ...patch } : x)));
@@ -236,10 +269,29 @@ export default function MediaPage() {
         setItem({ progress: 1 });
       } catch (err) {
         setItem({ error: (err as Error).message });
+        failed = [...failed, { name: f.name, progress: 0, error: (err as Error).message }];
       }
     }
     await load().catch(() => {});
+    setUploads([]);
+    // El aviso de progreso es personalizado; se cierra y el resultado va en un aviso normal.
+    toast.dismiss(UPLOAD_TOAST);
+    const ok = list.length - failed.length;
+    if (failed.length === 0) {
+      toast.success(ok === 1 ? `"${list[0].name}" subido` : `${ok} archivos subidos`, { duration: 4000 });
+    } else {
+      toast.error(ok > 0 ? `${ok} subidos, ${failed.length} con error` : failed.length === 1 ? "No se pudo subir el archivo" : "No se pudieron subir los archivos", {
+        duration: 10000,
+        description: failed.map((u) => `${u.name}: ${u.error}`).join("\n"),
+      });
+    }
   }
+
+  // Progreso de subida como aviso flotante (abajo a la derecha) en vez de ocupar la página.
+  useEffect(() => {
+    if (uploads.length === 0) return;
+    toast.custom(() => <UploadToast uploads={uploads} />, { id: UPLOAD_TOAST, duration: Infinity });
+  }, [uploads]);
 
   // Arrastrar archivos del sistema: se cuentan entradas/salidas para que el resaltado no parpadee.
   const isFileDrag = (e: React.DragEvent) => Array.from(e.dataTransfer.types).includes("Files");
@@ -286,8 +338,8 @@ export default function MediaPage() {
     onDrop: (e: React.DragEvent) => dropOnFolder(e, dest),
   });
 
-  function createFolder() {
-    const name = window.prompt("Nombre de la nueva carpeta")?.trim();
+  async function createFolder() {
+    const name = await dialogs.prompt({ title: "Nueva carpeta", label: "Nombre", placeholder: "Ej.: Anuncios", confirmLabel: "Crear" });
     if (!name) return;
     void run(async () => {
       await api("/api/media/folders", { method: "POST", body: JSON.stringify({ name }) });
@@ -296,12 +348,13 @@ export default function MediaPage() {
     });
   }
 
-  function renameFolder(f: FolderDTO) {
-    const name = window.prompt("Nuevo nombre de la carpeta", f.name)?.trim();
+  async function renameFolder(f: FolderDTO) {
+    const name = await dialogs.prompt({ title: "Renombrar carpeta", label: "Nombre", defaultValue: f.name, confirmLabel: "Guardar" });
     if (!name || name === f.name) return;
     void run(async () => {
       await api(`/api/media/folders/${f.id}`, { method: "PATCH", body: JSON.stringify({ name }) });
       await load();
+      return "Carpeta renombrada";
     });
   }
 
@@ -312,17 +365,23 @@ export default function MediaPage() {
     });
   }
 
-  function renameAsset(m: MediaDTO) {
-    const name = window.prompt("Nuevo nombre", m.originalName)?.trim();
+  async function renameAsset(m: MediaDTO) {
+    const name = await dialogs.prompt({ title: "Renombrar archivo", label: "Nombre", defaultValue: m.originalName, confirmLabel: "Guardar" });
     if (!name || name === m.originalName) return;
     void run(async () => {
       await api(`/api/media/${m.id}`, { method: "PATCH", body: JSON.stringify({ name }) });
       await load();
+      return "Archivo renombrado";
     });
   }
 
-  function deleteFolder(f: FolderDTO) {
-    if (!confirm(`¿Eliminar la carpeta "${f.name}"? Los archivos que contiene se mantienen en Mi biblioteca.`)) return;
+  async function deleteFolder(f: FolderDTO) {
+    const ok = await dialogs.confirm({
+      title: "Eliminar carpeta",
+      message: `¿Eliminar la carpeta "${f.name}"? Los archivos que contiene se mantienen en Mi biblioteca.`,
+      danger: true,
+    });
+    if (!ok) return;
     void run(async () => {
       await api(`/api/media/folders/${f.id}`, { method: "DELETE" });
       if (folderId === f.id) setFolderId(null);
@@ -343,9 +402,14 @@ export default function MediaPage() {
     });
   }
 
-  function removeAssets(list: MediaDTO[]) {
+  async function removeAssets(list: MediaDTO[]) {
     if (list.length === 0) return;
-    if (!confirm(list.length === 1 ? `¿Eliminar "${list[0].originalName}"?` : `¿Eliminar ${list.length} archivos?`)) return;
+    const ok = await dialogs.confirm({
+      title: list.length === 1 ? "Eliminar archivo" : "Eliminar archivos",
+      message: list.length === 1 ? `¿Eliminar "${list[0].originalName}"? No se puede deshacer.` : `¿Eliminar ${list.length} archivos? No se puede deshacer.`,
+      danger: true,
+    });
+    if (!ok) return;
     void run(async () => {
       await Promise.all(list.map((m) => api(`/api/media/${m.id}`, { method: "DELETE" })));
       setSelected(new Set());
@@ -547,30 +611,6 @@ export default function MediaPage() {
             )}
           </div>
         </div>
-
-        {flash && <p className={`mt-4 text-sm ${flash.error ? "text-red-400" : "text-emerald-400"}`}>{flash.text}</p>}
-
-        {uploads.length > 0 && (
-          <ul className="card mt-4 divide-y divide-line text-sm">
-            {uploads.map((u, i) => (
-              <li key={i} className="space-y-1.5 px-4 py-2.5">
-                <div className="flex items-center gap-3">
-                  <span className="min-w-0 flex-1 truncate">{u.name}</span>
-                  {u.error ? (
-                    <span className="text-red-400">{u.error}</span>
-                  ) : (
-                    <span className="tabular-nums text-zinc-400">{Math.round(u.progress * 100)}%</span>
-                  )}
-                </div>
-                {!u.error && (
-                  <div className="h-1 overflow-hidden rounded-full bg-raised">
-                    <div className="h-full bg-accent transition-[width]" style={{ width: `${u.progress * 100}%` }} />
-                  </div>
-                )}
-              </li>
-            ))}
-          </ul>
-        )}
 
         {selectedAssets.length > 0 && (
           <div className="relative mt-5 flex items-center gap-3 rounded-xl border border-accent/50 bg-accent/10 px-4 py-2 text-sm" onClick={(e) => e.stopPropagation()}>

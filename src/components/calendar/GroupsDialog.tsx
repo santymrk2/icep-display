@@ -1,22 +1,23 @@
 "use client";
 
 import { useState } from "react";
+import { toast } from "sonner";
 import { api, type GroupDTO } from "@/lib/client";
+import { useDialogs } from "@/components/Dialogs";
 
 export function GroupsDialog({ groups, onChanged, onClose }: { groups: GroupDTO[]; onChanged: () => Promise<void>; onClose: () => void }) {
   const [newName, setNewName] = useState("");
   const [editId, setEditId] = useState<string | null>(null);
   const [editName, setEditName] = useState("");
-  const [msg, setMsg] = useState<{ text: string; error: boolean } | null>(null);
+  const dialogs = useDialogs();
 
   async function run(action: () => Promise<string>) {
-    setMsg(null);
     try {
       const text = await action();
-      setMsg({ text, error: false });
+      toast.success(text);
       await onChanged();
     } catch (err) {
-      setMsg({ text: (err as Error).message, error: true });
+      toast.error((err as Error).message);
     }
   }
 
@@ -37,8 +38,14 @@ export function GroupsDialog({ groups, onChanged, onClose }: { groups: GroupDTO[
     });
   }
 
-  function remove(g: GroupDTO) {
-    if (!confirm(`¿Borrar el grupo "${g.name}"? También se borrarán sus bloques de programación. Sus pantallas quedan sin grupo.`)) return;
+  async function remove(g: GroupDTO) {
+    const ok = await dialogs.confirm({
+      title: "Borrar grupo",
+      message: `¿Borrar el grupo "${g.name}"? También se borrarán sus bloques de programación. Sus pantallas quedan sin grupo.`,
+      danger: true,
+      confirmLabel: "Borrar",
+    });
+    if (!ok) return;
     void run(async () => {
       const res = await api<{ schedulesDeleted: number }>(`/api/groups/${g.id}`, { method: "DELETE" });
       return `Grupo borrado. Se borraron ${res.schedulesDeleted} bloque(s).`;
@@ -107,14 +114,13 @@ export function GroupsDialog({ groups, onChanged, onClose }: { groups: GroupDTO[
                       type="button"
                       className="btn"
                       onClick={() => {
-                        setMsg(null);
                         setEditId(g.id);
                         setEditName(g.name);
                       }}
                     >
                       Renombrar
                     </button>
-                    <button type="button" className="btn-danger" onClick={() => remove(g)}>
+                    <button type="button" className="btn-danger" onClick={() => void remove(g)}>
                       Borrar
                     </button>
                   </>
@@ -124,11 +130,6 @@ export function GroupsDialog({ groups, onChanged, onClose }: { groups: GroupDTO[
           </ul>
         )}
 
-        {msg && (
-          <p role={msg.error ? "alert" : "status"} className={`text-sm ${msg.error ? "text-red-400" : "text-zinc-400"}`}>
-            {msg.text}
-          </p>
-        )}
       </div>
     </div>
   );

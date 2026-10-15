@@ -2,7 +2,9 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, type CalendarDTO, type DeviceDTO, type GroupDTO, type Orientation, type PresentationDTO } from "@/lib/client";
+import { toast } from "sonner";
 import { IconClose, IconDevices, IconPlus, IconSearch } from "@/components/Icons";
+import { useDialogs } from "@/components/Dialogs";
 
 const CODE_LENGTH = 4;
 const MAX_TAGS = 10;
@@ -49,7 +51,6 @@ export default function DevicesPage() {
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [pairing, setPairing] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     const [list, groupList, calendarList] = await Promise.all([
@@ -174,8 +175,6 @@ export default function DevicesPage() {
         </div>
       </div>
 
-      {notice && <p className="text-sm text-emerald-400">{notice}</p>}
-
       <div className="table-shell overflow-x-auto">
         <table className="min-w-[960px]">
           <thead>
@@ -287,7 +286,7 @@ export default function DevicesPage() {
           onClose={closePairing}
           onPaired={async () => {
             setPairing(false);
-            setNotice("Pantalla vinculada");
+            toast.success("Pantalla vinculada");
             await load();
           }}
         />
@@ -696,6 +695,7 @@ function DeviceDrawer({
   const [tags, setTags] = useState(device.tags);
   const [tagDraft, setTagDraft] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const dialogs = useDialogs();
 
   // Al llegar datos nuevos del servidor (polling), se toman como verdad.
   useEffect(() => {
@@ -742,10 +742,17 @@ function DeviceDrawer({
   }
 
   async function remove() {
-    if (!confirm(`¿Desvincular "${device.name}"?`)) return;
+    const ok = await dialogs.confirm({
+      title: "Desvincular pantalla",
+      message: `¿Desvincular "${device.name}"? Va a tener que volver a vincularse con un código para mostrar contenido.`,
+      danger: true,
+      confirmLabel: "Desvincular",
+    });
+    if (!ok) return;
     setError(null);
     try {
       await api(`/api/devices/${device.id}`, { method: "DELETE" });
+      toast.success("Pantalla desvinculada");
       onClose();
       await reload();
     } catch (err) {
