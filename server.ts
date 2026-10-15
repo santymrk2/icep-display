@@ -11,6 +11,7 @@ import { devices } from "@/db/schema";
 import { BUCKET, ensureBucket, minioHost, minioPort } from "@/lib/storage";
 import { cookieValue, ensureAdmin, operatorMayCall, userFromToken } from "@/lib/auth";
 import { attachDevice, createPairingCode, rememberScreen, refreshAll, refreshDevice, send } from "@/lib/hub";
+import { startNotionSync } from "@/lib/notion";
 import type { ClientMessage } from "@/lib/protocol";
 
 const dev = process.env.NODE_ENV !== "production";
@@ -201,6 +202,8 @@ async function main() {
 
   // Reevalúa programación y takeovers con vencimiento (solo envía si algo cambió).
   setInterval(() => void refreshAll().catch(console.error), 30_000);
+  // Reuniones de Notion → eventos del calendario.
+  startNotionSync();
 
   server.listen(port, () => console.log(`> Cartelería lista en http://0.0.0.0:${port}`));
 }

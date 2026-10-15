@@ -7,11 +7,14 @@ import { checkSchedule, findConflict, isUuid, loadSchedules, saveSchedule, type 
 
 type Ctx = { params: Promise<{ id: string }> };
 
+const FROM_NOTION = "Este evento viene de Notion: se cambia en Notion o en Ajustes > Reuniones";
+
 export async function PATCH(req: Request, { params }: Ctx) {
   const { id } = await params;
   if (!isUuid(id)) return error("Bloque no encontrado", 404);
   const [current] = await loadSchedules(eq(schedules.id, id));
   if (!current) return error("Bloque no encontrado", 404);
+  if (current.notionPageId) return error(FROM_NOTION, 409);
   const checked = await checkSchedule((await req.json()) as ScheduleBody, current);
   if ("error" in checked) return error(checked.error);
   const conflict = await findConflict(checked.values, { id });
@@ -24,6 +27,8 @@ export async function PATCH(req: Request, { params }: Ctx) {
 export async function DELETE(_req: Request, { params }: Ctx) {
   const { id } = await params;
   if (!isUuid(id)) return error("Bloque no encontrado", 404);
+  const [current] = await db.select({ notionPageId: schedules.notionPageId }).from(schedules).where(eq(schedules.id, id));
+  if (current?.notionPageId) return error(FROM_NOTION, 409);
   await db.delete(schedules).where(eq(schedules.id, id));
   await refreshAll();
   return json({ ok: true });

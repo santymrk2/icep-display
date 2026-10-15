@@ -172,6 +172,27 @@ export const schedules = pgTable("schedules", {
   rrule: text("rrule"),
   priority: integer("priority").notNull().default(0),
   enabled: boolean("enabled").notNull().default(true),
+  /** Reunión de Notion de la que sale este evento (null = creado a mano). Se sincroniza solo. */
+  notionPageId: text("notion_page_id").unique(),
+  meetingTypeId: uuid("meeting_type_id").references((): AnyPgColumn => meetingTypes.id, { onDelete: "cascade" }),
+});
+
+/**
+ * Tipos de reunión de Notion (ej. "Reunión de oración"). Notion solo trae el inicio; acá se define
+ * cuánto antes empieza a mostrarse, cuánto después termina y qué presentación usar.
+ */
+export const meetingTypes = pgTable("meeting_types", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  /** Nombre tal cual aparece en Notion. */
+  name: text("name").notNull().unique(),
+  /** Sin presentación no se crean eventos para este tipo. */
+  presentationId: uuid("presentation_id").references(() => presentations.id, { onDelete: "set null" }),
+  /** null = el primer calendario. */
+  calendarId: uuid("calendar_id").references(() => calendars.id, { onDelete: "set null" }),
+  minutesBefore: integer("minutes_before").notNull().default(60),
+  minutesAfter: integer("minutes_after").notNull().default(150),
+  enabled: boolean("enabled").notNull().default(true),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
 /** Pantallas a las que apunta un bloque (varias a la vez). Sin filas ni grupo = todas las pantallas. */
