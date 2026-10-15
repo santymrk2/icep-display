@@ -27,12 +27,23 @@ type MediaRow = {
   rotation: Rotation;
   flipH: boolean;
   flipV: boolean;
+  /** Videos: con sonido. */
+  sound: boolean;
   asset: MediaDTO;
 };
 /** "collapsed" es solo de la interfaz: no se envía al servidor. */
 type SectionRow = { uid: number; type: "section"; name: string; collapsed: boolean };
 type Row = MediaRow | SectionRow;
-type Detail = { id: string; name: string; description: string | null; orientation: Orientation; transition: Transition; items: Row[] };
+type Detail = {
+  id: string;
+  name: string;
+  description: string | null;
+  orientation: Orientation;
+  transition: Transition;
+  /** Segundos por imagen cuando el elemento no tiene duración propia; null = DEFAULT_IMAGE_SECONDS. */
+  defaultDurationSeconds: number | null;
+  items: Row[];
+};
 
 type ApiItem =
   | {
@@ -44,12 +55,23 @@ type ApiItem =
       rotation?: number;
       flipH?: boolean;
       flipV?: boolean;
+      sound?: boolean;
       asset: MediaDTO;
     }
   | { type: "section"; name: string };
-type ApiDetail = { id: string; name: string; description: string | null; orientation: string; transition: string; items: ApiItem[] };
+type ApiDetail = {
+  id: string;
+  name: string;
+  description: string | null;
+  orientation: string;
+  transition: string;
+  defaultDurationSeconds?: number | null;
+  items: ApiItem[];
+};
 
 const ACCENT = "#2492ff";
+/** Igual que en src/lib/playback.ts. */
+const DEFAULT_IMAGE_SECONDS = 10;
 const ICEP_FADE_CSS =
   "@keyframes icep-fade{from{opacity:0}to{opacity:1}}.icep-fade{animation:icep-fade 700ms ease-in-out}@media (prefers-reduced-motion:reduce){.icep-fade{animation:none}}";
 
@@ -68,6 +90,7 @@ function hydrate(d: ApiDetail): Detail {
     description: d.description,
     orientation: d.orientation === "portrait" ? "portrait" : "landscape",
     transition: d.transition === "dissolve" ? "dissolve" : "cut",
+    defaultDurationSeconds: d.defaultDurationSeconds ?? null,
     items: d.items.map((it): Row =>
       it.type === "section"
         ? { uid: nextUid(), type: "section", name: it.name, collapsed: false }
@@ -81,6 +104,7 @@ function hydrate(d: ApiDetail): Detail {
             rotation: normRotation(it.rotation),
             flipH: !!it.flipH,
             flipV: !!it.flipV,
+            sound: !!it.sound,
             asset: it.asset,
           },
     ),
@@ -577,6 +601,7 @@ export default function PresentationsPage() {
         rotation: 0,
         flipH: false,
         flipV: false,
+        sound: false,
         asset: m,
       }),
     );
@@ -748,6 +773,7 @@ export default function PresentationsPage() {
         description: current.description,
         orientation: current.orientation,
         transition: current.transition,
+        defaultDurationSeconds: current.defaultDurationSeconds,
         items: current.items.map((it) =>
           it.type === "section"
             ? { type: "section", name: it.name }
@@ -760,6 +786,7 @@ export default function PresentationsPage() {
                 rotation: it.rotation,
                 flipH: it.flipH,
                 flipV: it.flipV,
+                sound: it.sound,
               },
         ),
       }),
@@ -1123,10 +1150,47 @@ export default function PresentationsPage() {
 
               {/* Barra de opciones de la presentación (se guardan con "Guardar") */}
               <div className="flex flex-wrap items-center gap-3 py-5 text-sm">
-                <button type="button" disabled className="flex items-center gap-2 rounded-lg border border-line bg-panel px-4 py-2.5 text-zinc-300 opacity-90" title="Se configura por elemento">
-                  <IconTimer />
-                  Ninguno
-                </button>
+                <Pop
+                  width="w-64"
+                  trigger={({ toggle }) => (
+                    <button
+                      type="button"
+                      onClick={toggle}
+                      className="flex items-center gap-2 rounded-lg border border-line bg-panel px-4 py-2.5 hover:bg-raised"
+                      aria-label="Avance automático"
+                      title="Cuánto dura cada imagen que no tiene una duración propia"
+                    >
+                      <IconTimer />
+                      Cada {current.defaultDurationSeconds ?? DEFAULT_IMAGE_SECONDS} s
+                    </button>
+                  )}
+                >
+                  {(close) => (
+                    <div className="space-y-2 p-3">
+                      <label className="block space-y-1 text-xs text-zinc-400">
+                        Segundos por imagen
+                        <input
+                          className="input w-full"
+                          type="number"
+                          min={1}
+                          placeholder={String(DEFAULT_IMAGE_SECONDS)}
+                          value={current.defaultDurationSeconds ?? ""}
+                          onChange={(e) => patchCurrent({ defaultDurationSeconds: e.target.value ? Math.max(1, Number(e.target.value)) : null })}
+                        />
+                      </label>
+                      <p className="text-xs text-zinc-500">Los videos se reproducen completos. Cada elemento puede tener su propia duración.</p>
+                      <button
+                        className="btn w-full"
+                        onClick={() => {
+                          patchCurrent({ defaultDurationSeconds: null });
+                          close();
+                        }}
+                      >
+                        Predeterminado ({DEFAULT_IMAGE_SECONDS} s)
+                      </button>
+                    </div>
+                  )}
+                </Pop>
                 <Pop
                   trigger={({ toggle }) => (
                     <button type="button" onClick={toggle} className="flex items-center gap-2 rounded-lg border border-line bg-panel px-4 py-2.5 hover:bg-raised" aria-label="Transición">
@@ -1252,7 +1316,8 @@ export default function PresentationsPage() {
                         }
 
                         const a = it.asset;
-                        const dur = it.durationSeconds ?? (a.kind === "video" ? a.durationSeconds : null);
+                        const dur = it.durationSeconds ?? (a.kind === "video" ? a.durationSeconds : (current.defaultDurationSeconds ?? DEFAULT_IMAGE_SECONDS));
+                        const tr = it.transition ?? current.transition;
                         return (
                           <tr
                             key={it.uid}
@@ -1289,13 +1354,14 @@ export default function PresentationsPage() {
                               {a.mimeType.split("/")[1] ?? a.kind}
                             </td>
                             <td style={cellStyle} className="px-4">
-                              <div className="flex items-center gap-3 text-xs text-zinc-600">
-                                <span className="flex items-center gap-1.5">
+                              <div className="flex items-center gap-3 text-xs text-zinc-500">
+                                <span className="flex items-center gap-1.5" title={it.durationSeconds ? "Duración propia" : "Duración de la presentación"}>
                                   <IconTimer />
-                                  Ninguno
+                                  {it.durationSeconds ? `${it.durationSeconds} s` : a.kind === "video" ? "Al terminar" : "Predet."}
                                 </span>
-                                <span className="text-zinc-600">
-                                  <IconCut />
+                                <span className="flex items-center gap-1.5" title={it.transition ? "Transición propia" : "Transición de la presentación"}>
+                                  {tr === "dissolve" ? <IconDissolve /> : <IconCut />}
+                                  {it.transition ? (tr === "dissolve" ? "Disolver" : "Corte") : ""}
                                 </span>
                               </div>
                             </td>
@@ -1457,7 +1523,11 @@ export default function PresentationsPage() {
                   trigger={({ toggle }) => (
                     <button className="btn" onClick={toggle}>
                       <IconTimer />
-                      {detail.durationSeconds ? `${detail.durationSeconds} s` : "Predeterminado"}
+                      {detail.durationSeconds
+                        ? `${detail.durationSeconds} s`
+                        : detail.asset.kind === "image"
+                          ? `Predeterminado (${current.defaultDurationSeconds ?? DEFAULT_IMAGE_SECONDS} s)`
+                          : "Predeterminado"}
                     </button>
                   )}
                 >
@@ -1469,7 +1539,13 @@ export default function PresentationsPage() {
                           className="input w-full"
                           type="number"
                           min={1}
-                          placeholder={detail.asset.kind === "video" ? (detail.asset.durationSeconds != null ? String(detail.asset.durationSeconds) : "auto") : "10"}
+                          placeholder={
+                            detail.asset.kind === "video"
+                              ? detail.asset.durationSeconds != null
+                                ? String(detail.asset.durationSeconds)
+                                : "auto"
+                              : String(current.defaultDurationSeconds ?? DEFAULT_IMAGE_SECONDS)
+                          }
                           value={detail.durationSeconds ?? ""}
                           onChange={(e) => setDuration(detail.uid, e.target.value)}
                         />
@@ -1536,6 +1612,12 @@ export default function PresentationsPage() {
                   <option value="270">270°</option>
                 </select>
               </label>
+              {detail.asset.kind === "video" && (
+                <div className="flex items-center justify-between gap-3">
+                  <span title="Algunas pantallas no permiten audio automático; ahí el video se reproduce sin sonido">Sonido</span>
+                  <Toggle checked={detail.sound} onChange={(v) => patchMedia(detail.uid, { sound: v })} label="Sonido" />
+                </div>
+              )}
               <div className="flex items-center justify-between gap-3">
                 <span>Espejo horizontal</span>
                 <Toggle checked={detail.flipH} onChange={(v) => patchMedia(detail.uid, { flipH: v })} label="Espejo horizontal" />

@@ -13,6 +13,8 @@ export type PlayItem = {
   rotation: number;
   flipH: boolean;
   flipV: boolean;
+  /** Videos: con sonido. Si el navegador bloquea el audio, se reproduce silenciado. */
+  sound: boolean;
 };
 
 /** Cómo se muestra el contenido en esta pantalla. */
