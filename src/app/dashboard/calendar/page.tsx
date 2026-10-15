@@ -166,10 +166,55 @@ export default function CalendarPage() {
     return "Todas las pantallas del calendario";
   };
 
+  // Un evento que se está editando se dibuja con los valores del formulario, antes de guardar.
+  const live = useMemo(() => {
+    if (!form?.id) return list;
+    const rep = form.repeats;
+    const week = rep && form.freq === "week";
+    return list.map((s): ScheduleDTO =>
+      s.id !== form.id
+        ? s
+        : {
+            ...s,
+            name: form.name.trim() || s.name,
+            allDay: form.allDay,
+            startTime: form.allDay ? "00:00" : form.startTime,
+            endTime: form.allDay ? "23:59" : form.endTime,
+            validFrom: form.date,
+            freq: rep ? form.freq : ("none" as const),
+            interval: rep ? Math.max(1, form.interval || 1) : 1,
+            daysOfWeek: week ? bitmask(form.days) : bitmask(onlyDay(parseYmd(form.date).getDay())),
+            endsMode: rep ? form.endsMode : "never",
+            validUntil: rep && form.endsMode === "on" ? form.validUntil || null : null,
+            endsAfter: rep && form.endsMode === "after" ? form.endsAfter : null,
+          },
+    );
+  }, [list, form]);
+
   const eventsOn = (d: Date) => {
     const key = ymd(d);
-    return list.filter((s) => !hidden.has(s.calendarId) && occursOn(s, key));
+    return live.filter((s) => !hidden.has(s.calendarId) && occursOn(s, key));
   };
+
+  // Evento nuevo sin guardar: se dibuja provisoriamente donde quedaría.
+  const isDraftOn = (d: Date) => {
+    if (!form || form.id) return false;
+    const rep = form.repeats;
+    const week = rep && form.freq === "week";
+    return occursOn(
+      {
+        freq: rep ? form.freq : "none",
+        interval: rep ? Math.max(1, form.interval || 1) : 1,
+        daysOfWeek: week ? bitmask(form.days) : bitmask(onlyDay(parseYmd(form.date).getDay())),
+        validFrom: form.date,
+        endsMode: rep ? form.endsMode : "never",
+        validUntil: rep && form.endsMode === "on" ? form.validUntil || null : null,
+        endsAfter: rep && form.endsMode === "after" ? form.endsAfter : null,
+      },
+      ymd(d),
+    );
+  };
+  const draftName = form?.name.trim() || "(Sin título)";
 
   function openNew(date: Date, startMin?: number, endMin?: number) {
     setMsg(null);
@@ -300,7 +345,8 @@ export default function CalendarPage() {
   const monthStart = new Date(cursor.getFullYear(), cursor.getMonth(), 1);
   const monthCells = Array.from({ length: 42 }, (_, i) => addDays(startOfWeek(monthStart), i));
   const cols = view === "dia" ? "grid-cols-[3.5rem_minmax(0,1fr)]" : "grid-cols-[3.5rem_repeat(7,minmax(0,1fr))]";
-  const hasAllDay = columns.some((d) => eventsOn(d).some((s) => s.allDay));
+  const draftAllDay = !!form && !form.id && form.allDay;
+  const hasAllDay = columns.some((d) => eventsOn(d).some((s) => s.allDay) || (draftAllDay && isDraftOn(d)));
 
   return (
     <div className="flex h-full min-h-0">
@@ -388,6 +434,12 @@ export default function CalendarPage() {
                         </span>
                       ))}
                       {items.length > 3 && <span className="text-[11px] text-zinc-400">+{items.length - 3} más</span>}
+                      {isDraftOn(d) && (
+                        <span className="truncate rounded border border-dashed border-accent bg-accent/25 px-1.5 py-0.5 text-[11px] text-white">
+                          {form?.allDay ? "" : `${form?.startTime} `}
+                          {draftName}
+                        </span>
+                      )}
                     </button>
                   );
                 })}
@@ -420,6 +472,9 @@ export default function CalendarPage() {
                               {s.name}
                             </button>
                           ))}
+                        {draftAllDay && isDraftOn(d) && (
+                          <div className="truncate rounded border border-dashed border-accent bg-accent/25 px-1.5 py-0.5 text-[11px] text-white">{draftName}</div>
+                        )}
                       </div>
                     ))}
                   </>
@@ -469,6 +524,20 @@ export default function CalendarPage() {
                           <span className="h-px flex-1 bg-accent" />
                         </div>
                       )}
+                      {form && !form.id && !form.allDay && isDraftOn(d) && (() => {
+                        const pos = place({ startTime: form.startTime, endTime: form.endTime } as ScheduleDTO);
+                        if (!pos) return null;
+                        return (
+                          <div
+                            data-testid="draft-event"
+                            className="pointer-events-none absolute inset-x-0.5 z-[7] overflow-hidden rounded-md border-2 border-dashed border-accent bg-accent/30 px-1.5 py-1 text-xs leading-tight text-white"
+                            style={{ top: pos.top, height: pos.height }}
+                          >
+                            <div className="truncate font-semibold">{form.startTime} – {form.endTime}</div>
+                            <div className="break-words">{draftName}</div>
+                          </div>
+                        );
+                      })()}
                       {dayList.map((s) => {
                         const pos = place(s);
                         if (!pos) return null;
