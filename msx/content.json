@@ -1,0 +1,17 @@
+{
+  "type": "pages",
+  "headline": "Cartelería",
+  "action": "link:http://192.168.100.101:3000/player",
+  "pages": [
+    {
+      "items": [
+        {
+          "type": "button",
+          "layout": "0,0,12,6",
+          "label": "Abrir cartelería",
+          "action": "link:http://192.168.100.101:3000/player"
+        }
+      ]
+    }
+  ]
+}
