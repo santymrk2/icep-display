@@ -93,7 +93,7 @@ export function DialogsProvider({ children }: { children: React.ReactNode }) {
         position="bottom-right"
         richColors
         closeButton
-        toastOptions={{ classNames: { toast: "!rounded-xl !border-line", title: "!text-sm" } }}
+        toastOptions={{ classNames: { toast: "!rounded-xl !border-line", title: "!text-sm", description: "!whitespace-pre-line" } }}
       />
     </DialogsContext.Provider>
   );

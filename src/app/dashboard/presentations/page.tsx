@@ -603,8 +603,10 @@ export default function PresentationsPage() {
   async function uploadFiles(files: FileList | null) {
     if (!files || files.length === 0) return;
     setUploading(true);
+    const list = Array.from(files);
+    const id = toast.loading(list.length === 1 ? `Subiendo "${list[0].name}"…` : `Subiendo ${list.length} archivos…`);
     try {
-      for (const file of Array.from(files)) {
+      for (const file of list) {
         const res = await fetch("/api/media/upload", {
           method: "PUT",
           headers: { "content-type": file.type || "application/octet-stream", "x-file-name": encodeURIComponent(file.name) },
@@ -614,8 +616,9 @@ export default function PresentationsPage() {
         if (!res.ok) throw new Error(data.error ?? `Error ${res.status}`);
         setMedia((m) => [data, ...m]);
       }
+      toast.success(list.length === 1 ? `"${list[0].name}" subido` : `${list.length} archivos subidos`, { id });
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "No se pudo subir el archivo");
+      toast.error(e instanceof Error ? e.message : "No se pudo subir el archivo", { id });
     } finally {
       setUploading(false);
       if (fileInput.current) fileInput.current.value = "";

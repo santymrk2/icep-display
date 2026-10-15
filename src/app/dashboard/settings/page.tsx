@@ -145,6 +145,7 @@ function GeneralTab({
   async function uploadBackground(file: File) {
     if (!file.type.startsWith("image/")) return run(() => Promise.reject(new Error("Elegí una imagen")));
     setUploading(true);
+    const id = toast.loading("Subiendo fondo…");
     await run(async () => {
       const asset = await api<MediaDTO>("/api/media/upload", {
         method: "PUT",
@@ -153,6 +154,7 @@ function GeneralTab({
       });
       onSettings(await api<SettingsDTO>("/api/settings", { method: "PATCH", body: JSON.stringify({ defaultBackgroundId: asset.id }) }));
     }, "Fondo actualizado");
+    toast.dismiss(id);
     setUploading(false);
   }
 
