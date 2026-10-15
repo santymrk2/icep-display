@@ -13,6 +13,7 @@ docker compose up -d --build
 - Panel: `http://IP-DEL-SERVIDOR:3000/dashboard`
 - Reproductor (lo que abre cada TV en MSX): `http://IP-DEL-SERVIDOR:3000/player`
 - En Media Station X: Settings → Start Parameter → Setup, escribir solo `IP-DEL-SERVIDOR:3000` (sin `/`). MSX pide `/msx/start.json` y desde ahí abre el reproductor.
+- Si MSX corre en modo seguro (por ejemplo en Titan OS) no puede leer el servidor por HTTP y da "status 0". En ese caso se usa el archivo de inicio publicado en GitHub (`msx/start.json` de este repo, por HTTPS) con un link corto: en Start Parameter se escribe `id:igd:ALIAS`. La IP del servidor está fija en `msx/content.json`; si cambia, hay que editarla ahí.
 
 Las migraciones y el bucket de MinIO se crean solos al arrancar.
 
