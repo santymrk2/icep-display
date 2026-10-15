@@ -43,6 +43,13 @@
       "when": 1792017729459,
       "tag": "0005_calendars_recurrence_folders",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1792079203620,
+      "tag": "0006_media_subfolders",
+      "breakpoints": true
     }
   ]
 }

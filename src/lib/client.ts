@@ -29,6 +29,7 @@ export type MediaDTO = {
 export type FolderDTO = {
   id: string;
   name: string;
+  parentId: string | null;
   color: string;
   createdAt: string;
 };

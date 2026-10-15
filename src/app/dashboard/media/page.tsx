@@ -42,6 +42,8 @@ function UploadToast({ uploads }: { uploads: Upload[] }) {
 }
 /** Menú de acciones de una fila. key = "a:<assetId>" o "f:<folderId>". */
 type Menu = { key: string; view: "main" | "move" | "color"; top: number; right: number };
+/** Carpeta con su ruta completa ("Eventos / 2026") para los menús de mover. */
+type FolderOption = { folder: FolderDTO; path: string };
 /** Datos que se miden en el navegador antes de subir el archivo. */
 type Probe = { duration: number | null; width: number | null; height: number | null; thumb: Blob | null };
 
@@ -185,6 +187,7 @@ const fmtResolution = (m: MediaDTO) => (m.width && m.height ? `${m.width}×${m.h
 const menuItem = "flex w-full items-center px-4 py-2 text-left hover:bg-raised disabled:opacity-40 disabled:hover:bg-transparent";
 const FOLDER_COLORS = ["#2492ff", "#ff9f43", "#2ec4b6", "#a78bfa", "#f472b6", "#ef4444", "#facc15", "#9ca3af"];
 const MEDIA_DRAG = "application/x-media-ids";
+const FOLDER_DRAG = "application/x-media-folder-id";
 
 type SortKey = "name" | "type" | "date";
 
@@ -222,6 +225,8 @@ export default function MediaPage() {
   const dialogs = useDialogs();
   const fileInput = useRef<HTMLInputElement>(null);
   const dragDepth = useRef(0);
+  /** Carpeta que se está arrastrando: durante dragover el navegador no deja leer los datos del arrastre. */
+  const dragFolder = useRef<string | null>(null);
 
   const load = useCallback(async () => {
     const [m, f] = await Promise.all([api<MediaDTO[]>("/api/media"), api<FolderDTO[]>("/api/media/folders")]);
@@ -317,19 +322,33 @@ export default function MediaPage() {
     void handleFiles(e.dataTransfer.files);
   }
 
-  /** Arrastrar una fila de medio hacia una carpeta (o hacia "Mi biblioteca"). */
-  const isRowDrag = (e: React.DragEvent) => Array.from(e.dataTransfer.types).includes(MEDIA_DRAG);
+  /** Arrastrar filas de medios o una carpeta hacia una carpeta (o hacia "Mi biblioteca"). */
+  const isRowDrag = (e: React.DragEvent) => {
+    const types = Array.from(e.dataTransfer.types);
+    return types.includes(MEDIA_DRAG) || types.includes(FOLDER_DRAG);
+  };
+  /** Una carpeta no puede caer en sí misma, en una subcarpeta suya ni donde ya está. */
+  const canDropFolder = (id: string, dest: string | null) =>
+    dest === null ? byId.get(id)?.parentId !== null : !isInside(dest, id) && byId.get(id)?.parentId !== dest;
   function dropOnFolder(e: React.DragEvent, dest: string | null) {
     if (!isRowDrag(e)) return;
     e.preventDefault();
     e.stopPropagation();
     setDropFolder(null);
+    const folder = e.dataTransfer.getData(FOLDER_DRAG);
+    if (folder) {
+      dragFolder.current = null;
+      const f = byId.get(folder);
+      if (f && canDropFolder(f.id, dest)) moveFolder(f, dest);
+      return;
+    }
     const ids = (e.dataTransfer.getData(MEDIA_DRAG) || "").split(",").filter(Boolean);
     moveAssets(media.filter((m) => ids.includes(m.id)), dest);
   }
   const folderDropProps = (dest: string | null) => ({
     onDragOver: (e: React.DragEvent) => {
       if (!isRowDrag(e)) return;
+      if (dragFolder.current && !canDropFolder(dragFolder.current, dest)) return;
       e.preventDefault();
       e.stopPropagation();
       setDropFolder(dest ?? "root");
@@ -342,7 +361,7 @@ export default function MediaPage() {
     const name = await dialogs.prompt({ title: "Nueva carpeta", label: "Nombre", placeholder: "Ej.: Anuncios", confirmLabel: "Crear" });
     if (!name) return;
     void run(async () => {
-      await api("/api/media/folders", { method: "POST", body: JSON.stringify({ name }) });
+      await api("/api/media/folders", { method: "POST", body: JSON.stringify({ name, parentId: folderId }) });
       await load();
       return `Carpeta "${name}" creada`;
     });
@@ -375,16 +394,24 @@ export default function MediaPage() {
     });
   }
 
+  function moveFolder(f: FolderDTO, dest: string | null) {
+    void run(async () => {
+      await api(`/api/media/folders/${f.id}`, { method: "PATCH", body: JSON.stringify({ parentId: dest }) });
+      await load();
+      return `Carpeta "${f.name}" movida a ${folderName(dest)}`;
+    });
+  }
+
   async function deleteFolder(f: FolderDTO) {
     const ok = await dialogs.confirm({
       title: "Eliminar carpeta",
-      message: `¿Eliminar la carpeta "${f.name}"? Los archivos que contiene se mantienen en Mi biblioteca.`,
+      message: `¿Eliminar la carpeta "${f.name}"? Los archivos y subcarpetas que contiene pasan a ${folderName(f.parentId)}.`,
       danger: true,
     });
     if (!ok) return;
     void run(async () => {
       await api(`/api/media/folders/${f.id}`, { method: "DELETE" });
-      if (folderId === f.id) setFolderId(null);
+      if (folderId === f.id) setFolderId(f.parentId);
       await load();
       return `Carpeta "${f.name}" eliminada`;
     });
@@ -397,7 +424,7 @@ export default function MediaPage() {
       await Promise.all(items.map((m) => api(`/api/media/${m.id}`, { method: "PATCH", body: JSON.stringify({ folderId: dest }) })));
       setSelected(new Set());
       await load();
-      const where = dest ? folders.find((f) => f.id === dest)?.name : "Mi biblioteca";
+      const where = folderName(dest);
       return items.length === 1 ? `"${items[0].originalName}" movido a ${where}` : `${items.length} archivos movidos a ${where}`;
     });
   }
@@ -468,9 +495,27 @@ export default function MediaPage() {
   }
 
   const q = query.trim().toLowerCase();
-  const currentFolder = folders.find((f) => f.id === folderId) ?? null;
+  const byId = new Map(folders.map((f) => [f.id, f]));
+  const currentFolder = (folderId && byId.get(folderId)) || null;
+  /** Carpetas desde la raíz hasta `id` inclusive (el `seen` corta un ciclo si la base quedara inconsistente). */
+  function ancestry(id: string | null) {
+    const chain: FolderDTO[] = [];
+    const seen = new Set<string>();
+    for (let f = id ? byId.get(id) : undefined; f && !seen.has(f.id); f = f.parentId ? byId.get(f.parentId) : undefined) {
+      seen.add(f.id);
+      chain.unshift(f);
+    }
+    return chain;
+  }
+  /** true si `id` es `ancestor` o está dentro de él, a cualquier profundidad. */
+  const isInside = (id: string, ancestor: string) => ancestry(id).some((f) => f.id === ancestor);
+  const folderName = (id: string | null) => (id ? byId.get(id)?.name ?? "la carpeta" : "Mi biblioteca");
   const cmpText = (a: string, b: string) => a.localeCompare(b, "es", { sensitivity: "base", numeric: true });
-  const visibleFolders = (folderId === null ? folders.filter((f) => !q || f.name.toLowerCase().includes(q)) : []).sort((a, b) =>
+  const folderOptions: FolderOption[] = folders
+    .map((folder) => ({ folder, path: ancestry(folder.id).map((f) => f.name).join(" / ") }))
+    .sort((a, b) => cmpText(a.path, b.path));
+  const breadcrumb = ancestry(folderId);
+  const visibleFolders = folders.filter((f) => f.parentId === folderId && (!q || f.name.toLowerCase().includes(q))).sort((a, b) =>
     sort.key === "date" ? sort.dir * (+new Date(a.createdAt) - +new Date(b.createdAt)) : sort.key === "name" ? sort.dir * cmpText(a.name, b.name) : cmpText(a.name, b.name),
   );
   const visibleMedia = media
@@ -561,11 +606,30 @@ export default function MediaPage() {
 
         {folderId !== null && (
           <nav className="mt-4 flex flex-wrap items-center gap-2 text-sm">
-            <button className="text-accent hover:underline" onClick={() => openFolder(null)} {...folderDropProps(null)}>
+            <button
+              className={`rounded px-1 text-accent hover:underline ${dropFolder === "root" ? "bg-accent/25" : ""}`}
+              onClick={() => openFolder(null)}
+              {...folderDropProps(null)}
+            >
               ← Mi biblioteca
             </button>
-            <span className="text-zinc-600">/</span>
-            <span className="font-medium">{currentFolder?.name ?? "Carpeta no encontrada"}</span>
+            {breadcrumb.map((f) => (
+              <span key={f.id} className="flex items-center gap-2">
+                <span className="text-zinc-600">/</span>
+                {f.id === folderId ? (
+                  <span className="font-medium">{f.name}</span>
+                ) : (
+                  <button
+                    className={`rounded px-1 text-accent hover:underline ${dropFolder === f.id ? "bg-accent/25" : ""}`}
+                    onClick={() => openFolder(f.id)}
+                    {...folderDropProps(f.id)}
+                  >
+                    {f.name}
+                  </button>
+                )}
+              </span>
+            ))}
+            {!currentFolder && <span className="font-medium">Carpeta no encontrada</span>}
           </nav>
         )}
 
@@ -628,11 +692,11 @@ export default function MediaPage() {
                       Mi biblioteca
                     </button>
                   )}
-                  {folders
-                    .filter((f) => f.id !== folderId)
-                    .map((f) => (
-                      <button key={f.id} className={menuItem} onClick={() => (setBulkMove(false), moveAssets(selectedAssets, f.id))}>
-                        <span className="truncate">{f.name}</span>
+                  {folderOptions
+                    .filter(({ folder }) => folder.id !== folderId)
+                    .map(({ folder, path }) => (
+                      <button key={folder.id} className={menuItem} title={path} onClick={() => (setBulkMove(false), moveAssets(selectedAssets, folder.id))}>
+                        <span className="truncate">{path}</span>
                       </button>
                     ))}
                   {folders.length === 0 && folderId === null && <p className="px-4 py-2 text-xs text-zinc-500">Todavía no hay carpetas.</p>}
@@ -673,6 +737,16 @@ export default function MediaPage() {
                 {visibleFolders.map((f) => (
                   <tr
                     key={`f-${f.id}`}
+                    draggable
+                    onDragStart={(e) => {
+                      dragFolder.current = f.id;
+                      e.dataTransfer.setData(FOLDER_DRAG, f.id);
+                      e.dataTransfer.effectAllowed = "move";
+                    }}
+                    onDragEnd={() => {
+                      dragFolder.current = null;
+                      setDropFolder(null);
+                    }}
                     className={`row-click ${menu?.key === `f:${f.id}` ? "bg-white/[0.05]" : ""} ${dropFolder === f.id ? "!bg-accent/20 outline outline-2 -outline-offset-2 outline-accent" : ""}`}
                     onClick={() => openFolder(f.id)}
                     {...folderDropProps(f.id)}
@@ -807,15 +881,17 @@ export default function MediaPage() {
                   ← Mover a…
                 </button>
                 <div className="my-1 border-t border-line" />
-                <button className={menuItem} disabled={menuAsset.folderId === null} onClick={() => (setMenu(null), moveAssets([menuAsset], null))}>
-                  Mi biblioteca
-                </button>
-                {folders.map((f) => (
-                  <button key={f.id} className={menuItem} disabled={menuAsset.folderId === f.id} onClick={() => (setMenu(null), moveAssets([menuAsset], f.id))}>
-                    <span className="truncate">{f.name}</span>
+                <div className="max-h-64 overflow-auto">
+                  <button className={menuItem} disabled={menuAsset.folderId === null} onClick={() => (setMenu(null), moveAssets([menuAsset], null))}>
+                    Mi biblioteca
                   </button>
-                ))}
-                {folders.length === 0 && <p className="px-4 py-2 text-xs text-zinc-500">Todavía no hay carpetas.</p>}
+                  {folderOptions.map(({ folder, path }) => (
+                    <button key={folder.id} className={menuItem} title={path} disabled={menuAsset.folderId === folder.id} onClick={() => (setMenu(null), moveAssets([menuAsset], folder.id))}>
+                      <span className="truncate">{path}</span>
+                    </button>
+                  ))}
+                  {folders.length === 0 && <p className="px-4 py-2 text-xs text-zinc-500">Todavía no hay carpetas.</p>}
+                </div>
               </>
             )}
 
@@ -823,6 +899,9 @@ export default function MediaPage() {
               <>
                 <button className={menuItem} onClick={() => openFolder(menuFolder.id)}>
                   Abrir
+                </button>
+                <button className={menuItem} onClick={() => setMenu({ ...menu, view: "move" })}>
+                  Mover a carpeta…
                 </button>
                 <button className={menuItem} onClick={() => setMenu({ ...menu, view: "color" })}>
                   Cambiar color…
@@ -833,6 +912,33 @@ export default function MediaPage() {
                 <button className={`${menuItem} text-red-400`} onClick={() => (setMenu(null), deleteFolder(menuFolder))}>
                   Eliminar
                 </button>
+              </>
+            )}
+
+            {menuFolder && menu.view === "move" && (
+              <>
+                <button className="px-4 py-2 text-left text-xs text-zinc-400 hover:text-zinc-100" onClick={() => setMenu({ ...menu, view: "main" })}>
+                  ← Mover a…
+                </button>
+                <div className="my-1 border-t border-line" />
+                <div className="max-h-64 overflow-auto">
+                  <button className={menuItem} disabled={!canDropFolder(menuFolder.id, null)} onClick={() => (setMenu(null), moveFolder(menuFolder, null))}>
+                    Mi biblioteca
+                  </button>
+                  {folderOptions
+                    .filter(({ folder }) => !isInside(folder.id, menuFolder.id))
+                    .map(({ folder, path }) => (
+                      <button
+                        key={folder.id}
+                        className={menuItem}
+                        title={path}
+                        disabled={!canDropFolder(menuFolder.id, folder.id)}
+                        onClick={() => (setMenu(null), moveFolder(menuFolder, folder.id))}
+                      >
+                        <span className="truncate">{path}</span>
+                      </button>
+                    ))}
+                </div>
               </>
             )}
 
