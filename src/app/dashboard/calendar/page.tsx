@@ -66,6 +66,7 @@ function blankForm(calendarId: string, date: string, start = "09:00", end = "10:
     groupId: "",
     deviceIds: [],
     enabled: true,
+    fromNotion: false,
   };
 }
 
@@ -92,6 +93,7 @@ function toForm(s: ScheduleDTO): EventForm {
     groupId: s.groupId ?? "",
     deviceIds: s.deviceIds,
     enabled: s.enabled,
+    fromNotion: !!s.notionPageId,
   };
 }
 

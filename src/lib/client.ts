@@ -112,6 +112,33 @@ export type ScheduleDTO = {
   startTime: string;
   endTime: string;
   enabled: boolean;
+  /** Reunión de Notion de la que sale (null = evento creado a mano). */
+  notionPageId: string | null;
+  meetingTypeId: string | null;
+};
+
+export type MeetingTypeDTO = {
+  id: string;
+  name: string;
+  presentationId: string | null;
+  calendarId: string | null;
+  /** Hora si en Notion la reunión no tiene hora ("HH:MM:SS"). */
+  defaultStartTime: string | null;
+  minutesBefore: number;
+  minutesAfter: number;
+  enabled: boolean;
+  eventCount: number;
+};
+
+export type NotionSyncDTO = {
+  configured: boolean;
+  running: boolean;
+  lastSyncAt: string | null;
+  lastError: string | null;
+  meetings: number;
+  events: number;
+  skipped: { title: string; date: string | null; reason: string }[];
+  properties: { date: string | null; type: string | null; title: string | null };
 };
 
 export type CalendarDTO = {

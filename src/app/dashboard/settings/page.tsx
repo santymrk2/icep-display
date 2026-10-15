@@ -1,12 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from "react";
-import { api, type MediaDTO, type SettingsDTO, type TagDTO } from "@/lib/client";
+import { api, type CalendarDTO, type MeetingTypeDTO, type MediaDTO, type NotionSyncDTO, type PresentationDTO, type SettingsDTO, type TagDTO } from "@/lib/client";
 import { toast } from "sonner";
 import { IconClose, IconPlus, IconSearch } from "@/components/Icons";
 import { useDialogs } from "@/components/Dialogs";
 
-type Tab = "general" | "tags" | "providers";
+type Tab = "general" | "meetings" | "tags" | "providers";
 type SettingsPatch = { timezone?: string; defaultBackgroundId?: string | null; sharePreviewLinks?: boolean };
 type RunFn = (fn: () => Promise<unknown>, ok?: string) => Promise<void>;
 
@@ -60,6 +60,12 @@ export default function SettingsPage() {
 
   const load = useCallback(async () => setSettings(await api<SettingsDTO>("/api/settings")), []);
 
+  // Se puede abrir directo en una pestaña con ?tab=meetings (link desde el calendario).
+  useEffect(() => {
+    const t = new URLSearchParams(window.location.search).get("tab");
+    if (t === "meetings" || t === "tags" || t === "providers") setTab(t);
+  }, []);
+
   useEffect(() => {
     void load().catch((e) => toast.error((e as Error).message));
   }, [load]);
@@ -86,6 +92,7 @@ export default function SettingsPage() {
         {(
           [
             ["general", "General"],
+            ["meetings", "Reuniones"],
             ["tags", "Etiquetas"],
             ["providers", "Proveedores de contenido"],
           ] as const
@@ -111,6 +118,8 @@ export default function SettingsPage() {
         ) : (
           <p className="text-sm text-zinc-500">Cargando…</p>
         ))}
+
+      {tab === "meetings" && <MeetingsTab run={run} />}
 
       {tab === "tags" && <TagsTab run={run} />}
 
@@ -380,6 +389,297 @@ function MediaPickerModal({ onClose, onPick }: { onClose: () => void; onPick: (i
         </div>
       </div>
     </div>
+  );
+}
+
+/* ------------------------------------------------------------------ Reuniones (Notion) */
+
+type MeetingsView = { status: NotionSyncDTO; types: MeetingTypeDTO[] };
+type MeetingPatch = Partial<Pick<MeetingTypeDTO, "presentationId" | "calendarId" | "defaultStartTime" | "minutesBefore" | "minutesAfter" | "enabled">>;
+
+const fmtClock = (min: number) => {
+  const m = Math.min(Math.max(min, 0), 23 * 60 + 59);
+  return `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
+};
+
+function MeetingsTab({ run }: { run: RunFn }) {
+  const [data, setData] = useState<MeetingsView | null>(null);
+  const [presentations, setPresentations] = useState<PresentationDTO[]>([]);
+  const [calendars, setCalendars] = useState<CalendarDTO[]>([]);
+  const [syncing, setSyncing] = useState(false);
+  const [newName, setNewName] = useState("");
+  const dialogs = useDialogs();
+
+  const load = useCallback(async () => setData(await api<MeetingsView>("/api/meeting-types")), []);
+
+  useEffect(() => {
+    void run(async () => {
+      const [p, c] = await Promise.all([api<PresentationDTO[]>("/api/presentations"), api<CalendarDTO[]>("/api/calendars"), load()]);
+      setPresentations(p);
+      setCalendars(c);
+    });
+  }, [load, run]);
+
+  const update = (t: MeetingTypeDTO, patch: MeetingPatch) =>
+    run(async () => {
+      setData((d) => d && { ...d, types: d.types.map((x) => (x.id === t.id ? { ...x, ...patch } : x)) });
+      await api(`/api/meeting-types/${t.id}`, { method: "PATCH", body: JSON.stringify(patch) });
+      await load();
+    }, "Tipo de reunión guardado");
+
+  const syncNow = () =>
+    run(async () => {
+      setSyncing(true);
+      try {
+        setData(await api<MeetingsView>("/api/meeting-types/sync", { method: "POST" }));
+      } finally {
+        setSyncing(false);
+      }
+    }, "Sincronizado con Notion");
+
+  async function remove(t: MeetingTypeDTO) {
+    const n = t.eventCount;
+    const ok = await dialogs.confirm({
+      title: "Borrar tipo de reunión",
+      message: `¿Borrar "${t.name}"?${n ? ` Se borran sus ${n} eventos del calendario.` : ""} Si sigue en Notion, vuelve a aparecer sin configurar.`,
+      danger: true,
+      confirmLabel: "Borrar",
+    });
+    if (!ok) return;
+    void run(async () => {
+      await api(`/api/meeting-types/${t.id}`, { method: "DELETE" });
+      await load();
+    }, "Tipo borrado");
+  }
+
+  function add(e: React.FormEvent) {
+    e.preventDefault();
+    if (!newName.trim()) return;
+    void run(async () => {
+      await api("/api/meeting-types", { method: "POST", body: JSON.stringify({ name: newName }) });
+      setNewName("");
+      await load();
+    }, "Tipo agregado");
+  }
+
+  if (!data) return <p className="text-sm text-zinc-500">Cargando…</p>;
+  const { status, types } = data;
+
+  return (
+    <div className="space-y-8">
+      <section className="space-y-3">
+        <div className="space-y-1">
+          <h2 className="text-lg font-semibold">Reuniones desde Notion</h2>
+          <p className="text-sm text-zinc-400">
+            El servidor lee las reuniones de la base de Notion de la iglesia y crea solo los eventos del calendario. Si una reunión cambia de horario o se borra en Notion, el evento se
+            actualiza o se borra solo.
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center gap-4 rounded-xl border border-line bg-panel p-4 text-sm">
+          {status.configured ? (
+            <div className="flex-1 space-y-1">
+              <p>
+                {status.lastSyncAt ? (
+                  <>
+                    Última sincronización: {new Date(status.lastSyncAt).toLocaleString("es-AR")} · {status.meetings} {status.meetings === 1 ? "reunión" : "reuniones"},{" "}
+                    {status.events} {status.events === 1 ? "evento" : "eventos"}
+                  </>
+                ) : (
+                  "Todavía no se sincronizó"
+                )}
+              </p>
+              {status.lastError && <p className="text-red-400">{status.lastError}</p>}
+              {status.properties.date && (
+                <p className="text-xs text-zinc-500">
+                  Propiedades de Notion: fecha “{status.properties.date}”, tipo “{status.properties.type ?? "—"}”
+                </p>
+              )}
+            </div>
+          ) : (
+            <p className="flex-1 text-zinc-400">
+              Falta conectar Notion: completá <code className="text-zinc-200">NOTION_TOKEN</code> y <code className="text-zinc-200">NOTION_DATABASE_ID</code> en el archivo{" "}
+              <code className="text-zinc-200">.env</code> del servidor y reiniciá con <code className="text-zinc-200">docker compose up -d</code>.
+            </p>
+          )}
+          <button className="btn" disabled={!status.configured || syncing} onClick={() => void syncNow()}>
+            {syncing ? "Sincronizando…" : "Sincronizar ahora"}
+          </button>
+        </div>
+        {status.skipped.length > 0 && (
+          <details className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-3 text-sm">
+            <summary className="cursor-pointer text-amber-300">
+              {status.skipped.length} {status.skipped.length === 1 ? "reunión no aparece" : "reuniones no aparecen"} en el calendario
+            </summary>
+            <ul className="mt-2 space-y-1 text-zinc-300">
+              {status.skipped.map((x, i) => (
+                <li key={i}>
+                  {x.date ? `${x.date} · ` : ""}
+                  {x.title}: <span className="text-zinc-400">{x.reason}</span>
+                </li>
+              ))}
+            </ul>
+          </details>
+        )}
+      </section>
+
+      <section className="space-y-3">
+        <div className="space-y-1">
+          <h2 className="text-lg font-semibold">Tipos de reunión</h2>
+          <p className="text-sm text-zinc-400">
+            Notion solo trae la hora de inicio. Para cada tipo elegí qué presentación se muestra, cuántos minutos antes empieza y cuántos minutos después del inicio termina. La hora habitual se usa cuando en Notion la reunión tiene solo la fecha. Los tipos
+            nuevos de Notion aparecen solos; sin presentación no se crean eventos.
+          </p>
+        </div>
+
+        <div className="table-shell overflow-x-auto">
+          <table className="min-w-[980px]">
+            <thead>
+              <tr>
+                <th>Tipo</th>
+                <th>Presentación</th>
+                <th title="Se usa cuando en Notion la reunión tiene solo la fecha">Hora habitual</th>
+                <th>Empieza antes</th>
+                <th>Termina después</th>
+                <th>Calendario</th>
+                <th>Activo</th>
+                <th className="text-right">Acciones</th>
+              </tr>
+            </thead>
+            <tbody>
+              {types.length === 0 && (
+                <tr>
+                  <td colSpan={8} className="py-12 text-center text-zinc-500">
+                    {status.configured ? "Todavía no hay tipos: sincronizá para traerlos de Notion" : "Los tipos aparecen al conectar Notion, o agregalos a mano abajo"}
+                  </td>
+                </tr>
+              )}
+              {types.map((t) => (
+                <MeetingRow key={t.id} type={t} presentations={presentations} calendars={calendars} onChange={(p) => void update(t, p)} onDelete={() => void remove(t)} />
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        <form onSubmit={add} className="flex max-w-md gap-2">
+          <input className="input flex-1" placeholder="Nombre exacto del tipo en Notion" value={newName} onChange={(e) => setNewName(e.target.value)} />
+          <button className="btn" disabled={!newName.trim()}>
+            <IconPlus />
+            Agregar tipo
+          </button>
+        </form>
+      </section>
+    </div>
+  );
+}
+
+function MeetingRow({
+  type: t,
+  presentations,
+  calendars,
+  onChange,
+  onDelete,
+}: {
+  type: MeetingTypeDTO;
+  presentations: PresentationDTO[];
+  calendars: CalendarDTO[];
+  onChange: (patch: MeetingPatch) => void;
+  onDelete: () => void;
+}) {
+  const [before, setBefore] = useState(String(t.minutesBefore));
+  const [after, setAfter] = useState(String(t.minutesAfter));
+  useEffect(() => setBefore(String(t.minutesBefore)), [t.minutesBefore]);
+  useEffect(() => setAfter(String(t.minutesAfter)), [t.minutesAfter]);
+
+  const commit = (key: "minutesBefore" | "minutesAfter", raw: string) => {
+    const n = Number(raw);
+    if (!Number.isInteger(n) || n === t[key]) return key === "minutesBefore" ? setBefore(String(t.minutesBefore)) : setAfter(String(t.minutesAfter));
+    onChange({ [key]: n });
+  };
+  // Ejemplo con la hora habitual (o 20:00) para ver el efecto de los minutos.
+  const base = t.defaultStartTime ? Number(t.defaultStartTime.slice(0, 2)) * 60 + Number(t.defaultStartTime.slice(3, 5)) : 20 * 60;
+  const example = `Si empieza ${fmtClock(base)}: ${fmtClock(base - (Number(before) || 0))} a ${fmtClock(base + (Number(after) || 0))}`;
+
+  return (
+    <tr className={t.enabled ? "" : "opacity-50"}>
+      <td className="font-medium">
+        {t.name}
+        <div className="text-xs font-normal text-zinc-500">
+          {t.eventCount} {t.eventCount === 1 ? "evento" : "eventos"}
+        </div>
+      </td>
+      <td>
+        <select className="input w-48" value={t.presentationId ?? ""} onChange={(e) => onChange({ presentationId: e.target.value || null })}>
+          <option value="">Sin presentación</option>
+          {presentations.map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.name}
+            </option>
+          ))}
+        </select>
+      </td>
+      <td>
+        <input
+          type="time"
+          className="input w-28"
+          defaultValue={t.defaultStartTime?.slice(0, 5) ?? ""}
+          key={t.defaultStartTime ?? ""}
+          aria-label={`Hora habitual de ${t.name}`}
+          onBlur={(e) => {
+            const v = e.target.value || null;
+            if (v !== (t.defaultStartTime?.slice(0, 5) ?? null)) onChange({ defaultStartTime: v });
+          }}
+        />
+      </td>
+      <td>
+        <label className="flex items-center gap-2">
+          <input
+            type="number"
+            min={0}
+            max={1440}
+            step={15}
+            className="input w-20"
+            value={before}
+            onChange={(e) => setBefore(e.target.value)}
+            onBlur={(e) => commit("minutesBefore", e.target.value)}
+          />
+          <span className="text-xs text-zinc-400">min</span>
+        </label>
+      </td>
+      <td>
+        <label className="flex items-center gap-2">
+          <input
+            type="number"
+            min={1}
+            max={1440}
+            step={15}
+            className="input w-20"
+            value={after}
+            onChange={(e) => setAfter(e.target.value)}
+            onBlur={(e) => commit("minutesAfter", e.target.value)}
+          />
+          <span className="text-xs text-zinc-400">min</span>
+        </label>
+        <div className="mt-1 whitespace-nowrap text-xs text-zinc-500">{example}</div>
+      </td>
+      <td>
+        <select className="input w-40" value={t.calendarId ?? ""} onChange={(e) => onChange({ calendarId: e.target.value || null })}>
+          <option value="">{calendars[0] ? `${calendars[0].name} (predeterminado)` : "Predeterminado"}</option>
+          {calendars.map((c) => (
+            <option key={c.id} value={c.id}>
+              {c.name}
+            </option>
+          ))}
+        </select>
+      </td>
+      <td>
+        <input type="checkbox" className="h-4 w-4 accent-[#2492ff]" checked={t.enabled} onChange={(e) => onChange({ enabled: e.target.checked })} aria-label={`Activar ${t.name}`} />
+      </td>
+      <td className="text-right">
+        <button className="btn-danger" onClick={onDelete}>
+          Borrar
+        </button>
+      </td>
+    </tr>
   );
 }
 
