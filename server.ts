@@ -49,6 +49,28 @@ function proxyToMinio(req: IncomingMessage, res: import("node:http").ServerRespo
 }
 
 /**
+ * Media Station X: en "Start Parameter" se escribe solo IP:PUERTO (MSX no deja escribir "/")
+ * y la app pide http://IP:PUERTO/msx/start.json desde otro origen, así que necesita CORS.
+ * El start.json abre el reproductor (/player) con la acción "link:".
+ */
+function serveMsxStart(req: IncomingMessage, res: import("node:http").ServerResponse) {
+  const cors = {
+    "access-control-allow-origin": "*",
+    "access-control-allow-methods": "GET, HEAD, OPTIONS",
+    "access-control-allow-headers": "*",
+  };
+  if (req.method === "OPTIONS") return void res.writeHead(204, cors).end();
+  const proto = req.headers["x-forwarded-proto"] === "https" ? "https" : "http";
+  const body = JSON.stringify({
+    name: "Cartelería",
+    version: "1.0.0",
+    parameter: `link:${proto}://${req.headers.host}/player`,
+  });
+  res.writeHead(200, { ...cors, "content-type": "application/json; charset=utf-8", "cache-control": "no-cache" });
+  res.end(req.method === "HEAD" ? undefined : body);
+}
+
+/**
  * Autenticación del panel y la API (acá y no en un middleware de Next, porque el middleware
  * copia el cuerpo de la request y rompe las subidas de archivos grandes).
  * Públicos en la LAN: el reproductor (/player, /ws, /files), /login y los archivos estáticos de Next.
@@ -135,6 +157,7 @@ async function main() {
     if (req.url?.startsWith("/files/") && (req.method === "GET" || req.method === "HEAD")) {
       return proxyToMinio(req, res);
     }
+    if (req.url?.split("?")[0] === "/msx/start.json") return serveMsxStart(req, res);
     // IP del cliente para el límite de intentos de login. Se pisa el header para que no se pueda falsificar;
     // solo se confía en cf-connecting-ip / x-forwarded-for cuando la conexión viene del túnel local.
     const remote = req.socket.remoteAddress ?? "local";
