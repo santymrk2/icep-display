@@ -42,8 +42,6 @@ export function EventPanel({
   presentations,
   devices,
   groups,
-  msg,
-  msgError,
   saving,
   onSave,
   onDelete,
@@ -56,8 +54,6 @@ export function EventPanel({
   presentations: PresentationDTO[];
   devices: DeviceDTO[];
   groups: GroupDTO[];
-  msg: string | null;
-  msgError: boolean;
   saving: boolean;
   onSave: () => void;
   onDelete: () => void;
@@ -318,11 +314,6 @@ export function EventPanel({
           Activo
         </label>
 
-        {msg && (
-          <p role={msgError ? "alert" : "status"} className={`text-sm ${msgError ? "text-red-400" : "text-zinc-400"}`}>
-            {msg}
-          </p>
-        )}
       </div>
       <div className="flex gap-2 border-t border-line p-4">
         <button className="btn-primary flex-1" disabled={!canSave || saving}>

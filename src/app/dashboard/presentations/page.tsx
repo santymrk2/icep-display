@@ -10,7 +10,9 @@ import {
   type PresentationFolderDTO,
   type Transition,
 } from "@/lib/client";
+import { toast } from "sonner";
 import { IconClose, IconFolder, IconPlus, IconPresentations, IconSearch } from "@/components/Icons";
+import { useDialogs } from "@/components/Dialogs";
 
 type Fit = "contain" | "cover";
 type Rotation = 0 | 90 | 180 | 270;
@@ -393,7 +395,7 @@ export default function PresentationsPage() {
   const [media, setMedia] = useState<MediaDTO[]>([]);
   const [mFolders, setMFolders] = useState<FolderDTO[]>([]);
   const [current, setCurrent] = useState<Detail | null>(null);
-  const [status, setStatus] = useState<string | null>(null);
+  const dialogs = useDialogs();
   const [listQuery, setListQuery] = useState("");
   const [listOpen, setListOpen] = useState(true);
   const [openFolders, setOpenFolders] = useState<Set<string>>(new Set());
@@ -489,7 +491,6 @@ export default function PresentationsPage() {
   }, [detailUid, newPres, addOpen, preview]);
 
   async function open(id: string) {
-    setStatus(null);
     setPicked([]);
     setPreview(null);
     setDetailUid(null);
@@ -526,8 +527,14 @@ export default function PresentationsPage() {
   }
 
   async function deleteFolder(f: PresentationFolderDTO) {
-    if (!confirm(`¿Borrar la carpeta "${f.name}"?`)) return;
-    await api(`/api/presentation-folders/${f.id}`, { method: "DELETE" });
+    const ok = await dialogs.confirm({ title: "Borrar carpeta", message: `¿Borrar la carpeta "${f.name}"?`, danger: true, confirmLabel: "Borrar" });
+    if (!ok) return;
+    try {
+      await api(`/api/presentation-folders/${f.id}`, { method: "DELETE" });
+      toast.success(`Carpeta "${f.name}" borrada`);
+    } catch (e) {
+      toast.error((e as Error).message);
+    }
     await loadList();
   }
 
@@ -621,8 +628,10 @@ export default function PresentationsPage() {
   async function uploadFiles(files: FileList | null) {
     if (!files || files.length === 0) return;
     setUploading(true);
+    const list = Array.from(files);
+    const id = toast.loading(list.length === 1 ? `Subiendo "${list[0].name}"…` : `Subiendo ${list.length} archivos…`);
     try {
-      for (const file of Array.from(files)) {
+      for (const file of list) {
         const res = await fetch("/api/media/upload", {
           method: "PUT",
           headers: { "content-type": file.type || "application/octet-stream", "x-file-name": encodeURIComponent(file.name) },
@@ -632,8 +641,9 @@ export default function PresentationsPage() {
         if (!res.ok) throw new Error(data.error ?? `Error ${res.status}`);
         setMedia((m) => [data, ...m]);
       }
+      toast.success(list.length === 1 ? `"${list[0].name}" subido` : `${list.length} archivos subidos`, { id });
     } catch (e) {
-      setStatus(e instanceof Error ? e.message : "No se pudo subir el archivo");
+      toast.error(e instanceof Error ? e.message : "No se pudo subir el archivo", { id });
     } finally {
       setUploading(false);
       if (fileInput.current) fileInput.current.value = "";
@@ -745,6 +755,17 @@ export default function PresentationsPage() {
 
   async function save() {
     if (!current) return;
+    try {
+      await saveCurrent(current);
+    } catch (e) {
+      toast.error((e as Error).message);
+      return;
+    }
+    toast.success("Guardado", { description: "Las pantallas que la usan ya se actualizaron." });
+    await loadList();
+  }
+
+  async function saveCurrent(current: Detail) {
     await api(`/api/presentations/${current.id}`, {
       method: "PUT",
       body: JSON.stringify({
@@ -770,13 +791,19 @@ export default function PresentationsPage() {
         ),
       }),
     });
-    setStatus("Guardado. Las pantallas que la usan ya se actualizaron.");
-    await loadList();
   }
 
   async function remove() {
-    if (!current || !confirm(`¿Borrar "${current.name}"?`)) return;
-    await api(`/api/presentations/${current.id}`, { method: "DELETE" });
+    if (!current) return;
+    const ok = await dialogs.confirm({ title: "Borrar presentación", message: `¿Borrar "${current.name}"? No se puede deshacer.`, danger: true, confirmLabel: "Borrar" });
+    if (!ok) return;
+    try {
+      await api(`/api/presentations/${current.id}`, { method: "DELETE" });
+    } catch (e) {
+      toast.error((e as Error).message);
+      return;
+    }
+    toast.success(`"${current.name}" borrada`);
     setCurrent(null);
     setDetailUid(null);
     await loadList();
@@ -784,16 +811,20 @@ export default function PresentationsPage() {
 
   async function takeover() {
     if (!current) return;
-    await api("/api/takeover", { method: "POST", body: JSON.stringify({ presentationId: current.id, deviceId: null }) });
-    setStatus("En el aire en todas las pantallas.");
+    try {
+      await api("/api/takeover", { method: "POST", body: JSON.stringify({ presentationId: current.id, deviceId: null }) });
+      toast.success("En el aire en todas las pantallas");
+    } catch (e) {
+      toast.error((e as Error).message);
+    }
   }
 
   async function copyLink() {
     try {
       await navigator.clipboard.writeText(window.location.href);
-      setStatus("Enlace copiado.");
+      toast.success("Enlace copiado");
     } catch {
-      setStatus("No se pudo copiar el enlace.");
+      toast.error("No se pudo copiar el enlace");
     }
   }
 
@@ -1202,7 +1233,6 @@ export default function PresentationsPage() {
                   Agregar sección
                 </button>
               </div>
-              {status && <p className="pb-3 text-sm text-zinc-400">{status}</p>}
 
               <div ref={shellRef} className="overflow-hidden rounded-xl border border-line bg-panel" onDragOver={onExtOver} onDragLeave={onExtLeave} onDrop={onExtDrop}>
                 <div className="overflow-x-auto">

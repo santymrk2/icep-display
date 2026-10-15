@@ -2,10 +2,11 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from "react";
 import { api, type MediaDTO, type SettingsDTO, type TagDTO } from "@/lib/client";
+import { toast } from "sonner";
 import { IconClose, IconPlus, IconSearch } from "@/components/Icons";
+import { useDialogs } from "@/components/Dialogs";
 
 type Tab = "general" | "tags" | "providers";
-type Notice = { kind: "ok" | "error"; text: string } | null;
 type SettingsPatch = { timezone?: string; defaultBackgroundId?: string | null; sharePreviewLinks?: boolean };
 type RunFn = (fn: () => Promise<unknown>, ok?: string) => Promise<void>;
 
@@ -56,28 +57,19 @@ function listTimezones(): string[] {
 export default function SettingsPage() {
   const [tab, setTab] = useState<Tab>("general");
   const [settings, setSettings] = useState<SettingsDTO | null>(null);
-  const [notice, setNotice] = useState<Notice>(null);
 
   const load = useCallback(async () => setSettings(await api<SettingsDTO>("/api/settings")), []);
 
   useEffect(() => {
-    void load().catch((e) => setNotice({ kind: "error", text: (e as Error).message }));
+    void load().catch((e) => toast.error((e as Error).message));
   }, [load]);
 
-  // Los avisos de éxito se borran solos; los de error quedan hasta la próxima acción.
-  useEffect(() => {
-    if (notice?.kind !== "ok") return;
-    const t = setTimeout(() => setNotice(null), 4000);
-    return () => clearTimeout(t);
-  }, [notice]);
-
   const run: RunFn = useCallback(async (fn, ok) => {
-    setNotice(null);
     try {
       await fn();
-      if (ok) setNotice({ kind: "ok", text: ok });
+      if (ok) toast.success(ok);
     } catch (e) {
-      setNotice({ kind: "error", text: (e as Error).message });
+      toast.error((e as Error).message);
     }
   }, []);
 
@@ -112,7 +104,6 @@ export default function SettingsPage() {
         ))}
       </div>
 
-      {notice && <p className={`text-sm ${notice.kind === "ok" ? "text-emerald-400" : "text-red-400"}`}>{notice.text}</p>}
 
       {tab === "general" &&
         (settings ? (
@@ -154,6 +145,7 @@ function GeneralTab({
   async function uploadBackground(file: File) {
     if (!file.type.startsWith("image/")) return run(() => Promise.reject(new Error("Elegí una imagen")));
     setUploading(true);
+    const id = toast.loading("Subiendo fondo…");
     await run(async () => {
       const asset = await api<MediaDTO>("/api/media/upload", {
         method: "PUT",
@@ -162,6 +154,7 @@ function GeneralTab({
       });
       onSettings(await api<SettingsDTO>("/api/settings", { method: "PATCH", body: JSON.stringify({ defaultBackgroundId: asset.id }) }));
     }, "Fondo actualizado");
+    toast.dismiss(id);
     setUploading(false);
   }
 
@@ -397,6 +390,7 @@ function TagsTab({ run }: { run: RunFn }) {
   const [loaded, setLoaded] = useState(false);
   const [filter, setFilter] = useState("");
   const [modal, setModal] = useState<{ mode: "add" } | { mode: "edit"; tag: TagDTO } | null>(null);
+  const dialogs = useDialogs();
 
   const load = useCallback(async () => {
     setTags(await api<TagDTO[]>("/api/tags"));
@@ -410,10 +404,11 @@ function TagsTab({ run }: { run: RunFn }) {
   const q = filter.trim().toLowerCase();
   const visible = tags.filter((t) => !q || t.name.includes(q));
 
-  function remove(t: TagDTO) {
+  async function remove(t: TagDTO) {
     const n = t.devices.length;
     const extra = n > 0 ? ` Se quitará de ${n} ${n === 1 ? "pantalla" : "pantallas"}.` : "";
-    if (!confirm(`¿Borrar la etiqueta "${t.name}"?${extra}`)) return;
+    const ok = await dialogs.confirm({ title: "Borrar etiqueta", message: `¿Borrar la etiqueta "${t.name}"?${extra}`, danger: true, confirmLabel: "Borrar" });
+    if (!ok) return;
     void run(async () => {
       await api(`/api/tags/${t.id}`, { method: "DELETE" });
       await load();
@@ -499,7 +494,7 @@ function TagsTab({ run }: { run: RunFn }) {
                       <button className="btn" onClick={() => setModal({ mode: "edit", tag: t })}>
                         Editar descripción
                       </button>
-                      <button className="btn-danger" onClick={() => remove(t)}>
+                      <button className="btn-danger" onClick={() => void remove(t)}>
                         Borrar
                       </button>
                     </>
