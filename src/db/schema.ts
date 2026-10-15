@@ -69,6 +69,8 @@ export const presentations = pgTable("presentations", {
   /** Orientación de pantalla para la que se diseñó la presentación. */
   orientation: orientation("orientation").notNull().default("landscape"),
   transition: transitionKind("transition").notNull().default("cut"),
+  /** Segundos que dura cada imagen sin duración propia; null = 10 s. */
+  defaultDurationSeconds: integer("default_duration_seconds"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });

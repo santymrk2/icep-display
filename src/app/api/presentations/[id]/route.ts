@@ -67,6 +67,8 @@ export async function PUT(req: Request, { params }: Ctx) {
     description?: string | null;
     orientation?: string;
     transition?: string;
+    /** null = 10 s. */
+    defaultDurationSeconds?: number | null;
     items: ({ type?: "media"; mediaAssetId: string; durationSeconds: number | null; fit?: string; transition?: string | null; rotation?: number; flipH?: boolean; flipV?: boolean } | { type: "section"; name: string })[];
   };
   if (!body.name?.trim()) return error("Falta el nombre");
@@ -81,6 +83,9 @@ export async function PUT(req: Request, { params }: Ctx) {
         description: body.description?.trim() || null,
         ...(body.orientation ? { orientation: body.orientation as "landscape" | "portrait" } : {}),
         ...(body.transition ? { transition: body.transition as "cut" | "dissolve" } : {}),
+        ...(body.defaultDurationSeconds !== undefined
+          ? { defaultDurationSeconds: body.defaultDurationSeconds && body.defaultDurationSeconds > 0 ? Math.round(body.defaultDurationSeconds) : null }
+          : {}),
         updatedAt: new Date(),
       })
       .where(eq(presentations.id, id));
