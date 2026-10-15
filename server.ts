@@ -49,6 +49,36 @@ function proxyToMinio(req: IncomingMessage, res: import("node:http").ServerRespo
 }
 
 /**
+ * Media Station X: en "Start Parameter" se escribe solo IP:PUERTO (MSX no deja escribir "/")
+ * y la app pide http://IP:PUERTO/msx/start.json desde otro origen, así que necesita CORS.
+ * El parámetro de inicio tiene que ser "menu:" o "content:", así que start.json apunta a
+ * content.json, que abre el reproductor (/player) con la acción "link:" al arrancar y además
+ * deja un botón para volver a abrirlo.
+ */
+function serveMsx(req: IncomingMessage, res: import("node:http").ServerResponse, path: string) {
+  const cors = {
+    "access-control-allow-origin": "*",
+    "access-control-allow-methods": "GET, HEAD, OPTIONS",
+    "access-control-allow-headers": "*",
+  };
+  if (req.method === "OPTIONS") return void res.writeHead(204, cors).end();
+  const proto = req.headers["x-forwarded-proto"] === "https" ? "https" : "http";
+  const base = `${proto}://${req.headers.host}`;
+  const open = `link:${base}/player`;
+  const data =
+    path === "/msx/start.json"
+      ? { name: "Cartelería", version: "1.0.0", parameter: `content:${base}/msx/content.json` }
+      : {
+          type: "pages",
+          headline: "Cartelería",
+          action: open,
+          pages: [{ items: [{ type: "button", layout: "0,0,12,6", label: "Abrir cartelería", action: open }] }],
+        };
+  res.writeHead(200, { ...cors, "content-type": "application/json; charset=utf-8", "cache-control": "no-cache" });
+  res.end(req.method === "HEAD" ? undefined : JSON.stringify(data));
+}
+
+/**
  * Autenticación del panel y la API (acá y no en un middleware de Next, porque el middleware
  * copia el cuerpo de la request y rompe las subidas de archivos grandes).
  * Públicos en la LAN: el reproductor (/player, /ws, /files), /login y los archivos estáticos de Next.
@@ -135,6 +165,8 @@ async function main() {
     if (req.url?.startsWith("/files/") && (req.method === "GET" || req.method === "HEAD")) {
       return proxyToMinio(req, res);
     }
+    const msxPath = req.url?.split("?")[0];
+    if (msxPath === "/msx/start.json" || msxPath === "/msx/content.json") return serveMsx(req, res, msxPath);
     // IP del cliente para el límite de intentos de login. Se pisa el header para que no se pueda falsificar;
     // solo se confía en cf-connecting-ip / x-forwarded-for cuando la conexión viene del túnel local.
     const remote = req.socket.remoteAddress ?? "local";

@@ -12,6 +12,7 @@ docker compose up -d --build
 
 - Panel: `http://IP-DEL-SERVIDOR:3000/dashboard`
 - Reproductor (lo que abre cada TV en MSX): `http://IP-DEL-SERVIDOR:3000/player`
+- En Media Station X: Settings → Start Parameter → Setup, escribir solo `IP-DEL-SERVIDOR:3000` (sin `/`). MSX pide `/msx/start.json` y desde ahí abre el reproductor.
 
 Las migraciones y el bucket de MinIO se crean solos al arrancar.
 
