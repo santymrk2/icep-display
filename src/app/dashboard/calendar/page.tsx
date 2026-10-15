@@ -2,7 +2,9 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, type CalendarDTO, type DeviceDTO, type GroupDTO, type PresentationDTO, type PresentationFolderDTO, type ScheduleDTO, type SettingsDTO } from "@/lib/client";
+import { toast } from "sonner";
 import { occursOn } from "@/lib/recurrence";
+import { useDialogs } from "@/components/Dialogs";
 import { CalendarList } from "@/components/calendar/CalendarList";
 import { EventPanel, type EventForm } from "@/components/calendar/EventPanel";
 import { GroupsDialog } from "@/components/calendar/GroupsDialog";
@@ -123,8 +125,7 @@ export default function CalendarPage() {
   const [selectedCal, setSelectedCal] = useState("");
   const [form, setForm] = useState<EventForm | null>(null);
   const [panel, setPanel] = useState<"form" | "picker">("form");
-  const [msg, setMsg] = useState<string | null>(null);
-  const [msgError, setMsgError] = useState(false);
+  const dialogs = useDialogs();
   const [saving, setSaving] = useState(false);
   const [view, setView] = useState<View>("semana");
   const [now, setNow] = useState<Date | null>(null);
@@ -217,7 +218,6 @@ export default function CalendarPage() {
   const draftName = form?.name.trim() || "(Sin título)";
 
   function openNew(date: Date, startMin?: number, endMin?: number) {
-    setMsg(null);
     setPanel("form");
     const s = startMin === undefined ? 9 * 60 : Math.min(Math.max(startMin, DAY_START), DAY_END - 30);
     const e = endMin === undefined ? Math.min(s + 60, 23 * 60 + 59) : Math.min(Math.max(endMin, s + 15), 23 * 60 + 59);
@@ -225,7 +225,6 @@ export default function CalendarPage() {
   }
 
   function openEdit(s: ScheduleDTO, date?: Date) {
-    setMsg(null);
     setPanel("form");
     const f = toForm(s);
     // En eventos repetidos la fecha del formulario es el inicio de la serie, no el día clicado.
@@ -235,7 +234,6 @@ export default function CalendarPage() {
 
   async function save() {
     if (!form) return;
-    setMsg(null);
     setSaving(true);
     const rep = form.repeats;
     const week = rep && form.freq === "week";
@@ -261,25 +259,27 @@ export default function CalendarPage() {
     try {
       if (form.id) await api(`/api/schedules/${form.id}`, { method: "PATCH", body });
       else await api("/api/schedules", { method: "POST", body });
+      toast.success(form.id ? "Evento guardado" : "Evento creado");
       setForm(null);
       await Promise.all([load(), loadCalendars()]);
     } catch (err) {
-      setMsgError(true);
-      setMsg((err as Error).message);
+      toast.error((err as Error).message);
     } finally {
       setSaving(false);
     }
   }
 
   async function remove() {
-    if (!form?.id || !confirm(`¿Borrar "${form.name}"?`)) return;
+    if (!form?.id) return;
+    const ok = await dialogs.confirm({ title: "Borrar evento", message: `¿Borrar "${form.name}"?`, danger: true, confirmLabel: "Borrar" });
+    if (!ok) return;
     try {
       await api(`/api/schedules/${form.id}`, { method: "DELETE" });
+      toast.success("Evento borrado");
       setForm(null);
       await Promise.all([load(), loadCalendars()]);
     } catch (err) {
-      setMsgError(true);
-      setMsg((err as Error).message);
+      toast.error((err as Error).message);
     }
   }
 
@@ -591,8 +591,6 @@ export default function CalendarPage() {
               presentations={presentations}
               devices={devices}
               groups={groups}
-              msg={msg}
-              msgError={msgError}
               saving={saving}
               onSave={() => void save()}
               onDelete={() => void remove()}

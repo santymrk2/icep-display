@@ -1,7 +1,9 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { toast } from "sonner";
 import { api, type CalendarDTO, type DeviceDTO } from "@/lib/client";
+import { useDialogs } from "@/components/Dialogs";
 import { CAL_COLORS, IconCal, IconDots, IconEye, IconPlus } from "./helpers";
 
 export function CalendarList({
@@ -30,7 +32,7 @@ export function CalendarList({
   const [name, setName] = useState("");
   const [adding, setAdding] = useState(false);
   const [assign, setAssign] = useState<CalendarDTO | null>(null);
-  const [err, setErr] = useState<string | null>(null);
+  const dialogs = useDialogs();
 
   useEffect(() => {
     if (!menu) return;
@@ -39,13 +41,13 @@ export function CalendarList({
     return () => window.removeEventListener("click", close);
   }, [menu]);
 
-  async function run(fn: () => Promise<unknown>) {
-    setErr(null);
+  async function run(fn: () => Promise<unknown>, ok?: string) {
     try {
       await fn();
+      if (ok) toast.success(ok);
       await onChanged();
     } catch (e) {
-      setErr((e as Error).message);
+      toast.error((e as Error).message);
     }
   }
 
@@ -64,9 +66,15 @@ export function CalendarList({
       setRenaming(null);
     });
   const recolor = (id: string, color: string) => run(() => api(`/api/calendars/${id}`, { method: "PATCH", body: JSON.stringify({ color }) }));
-  const remove = (c: CalendarDTO) => {
-    if (!confirm(`¿Borrar el calendario "${c.name}"?${c.eventCount ? ` Se borrarán sus ${c.eventCount} evento(s).` : ""}`)) return;
-    void run(() => api(`/api/calendars/${c.id}`, { method: "DELETE" }));
+  const remove = async (c: CalendarDTO) => {
+    const ok = await dialogs.confirm({
+      title: "Borrar calendario",
+      message: `¿Borrar el calendario "${c.name}"?${c.eventCount ? ` Se borrarán sus ${c.eventCount} evento(s).` : ""}`,
+      danger: true,
+      confirmLabel: "Borrar",
+    });
+    if (!ok) return;
+    void run(() => api(`/api/calendars/${c.id}`, { method: "DELETE" }), "Calendario borrado");
   };
 
   return (
@@ -155,7 +163,7 @@ export function CalendarList({
                     className="block w-full px-3 py-1.5 text-left text-red-400 hover:bg-white/10"
                     onClick={() => {
                       setMenu(null);
-                      remove(c);
+                      void remove(c);
                     }}
                   >
                     Eliminar
@@ -167,11 +175,6 @@ export function CalendarList({
         })}
       </ul>
       <div className="border-t border-line p-3">
-        {err && (
-          <p role="alert" className="mb-2 text-xs text-red-400">
-            {err}
-          </p>
-        )}
         {adding ? (
           <form
             className="flex gap-1"

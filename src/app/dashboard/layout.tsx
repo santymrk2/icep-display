@@ -1,5 +1,6 @@
 import Sidebar from "@/components/Sidebar";
 import { HeaderUser } from "@/components/Session";
+import { DialogsProvider } from "@/components/Dialogs";
 
 /**
  * Marco general. El contenido (`main`) no tiene relleno propio: cada página lo define
@@ -7,6 +8,7 @@ import { HeaderUser } from "@/components/Session";
  */
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   return (
+    <DialogsProvider>
     <div className="flex h-screen flex-col">
       <header className="flex h-14 shrink-0 items-center border-b border-line bg-bar px-6">
         <div className="flex items-center gap-2.5 text-xl font-semibold tracking-tight">
@@ -26,5 +28,6 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         </div>
       </div>
     </div>
+    </DialogsProvider>
   );
 }
