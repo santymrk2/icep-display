@@ -7,7 +7,10 @@ const nextConfig: NextConfig = {
     return [{ source: "/player", destination: "/player.html" }];
   },
   async headers() {
-    return [{ source: "/player.html", headers: [{ key: "Cache-Control", value: "no-cache" }] }];
+    return [
+      { source: "/player", headers: [{ key: "Cache-Control", value: "no-store, no-cache, must-revalidate" }] },
+      { source: "/player.html", headers: [{ key: "Cache-Control", value: "no-store, no-cache, must-revalidate" }] },
+    ];
   },
 };
 

@@ -233,23 +233,33 @@
 
     // Si es video, forzar inicio de carga y reproducción una vez en el DOM
     if (item.kind !== 'image') {
-      try { el.load(); } catch (e) {}
-      var playPromise = null;
-      try { playPromise = el.play(); } catch (e) {
-        el.muted = true;
-        el.defaultMuted = true;
-        el.setAttribute('muted', '');
-        try { el.play(); } catch (e2) {}
-      }
-      if (playPromise && playPromise.catch) {
-        playPromise.catch(function () {
-          // El navegador bloqueó el autoplay con sonido: silenciar y reintentar
+      var started = false;
+      function startVideo() {
+        if (started || gen !== generation || el !== currentEl) return;
+        var p = null;
+        try { p = el.play(); } catch (e) {
           el.muted = true;
           el.defaultMuted = true;
           el.setAttribute('muted', '');
-          try { el.play(); } catch (e3) {}
-        });
+          try { p = el.play(); } catch (e2) {}
+        }
+        if (p && p.catch) {
+          p.catch(function () {
+            // El navegador bloqueó el autoplay con sonido: silenciar y reintentar
+            el.muted = true;
+            el.defaultMuted = true;
+            el.setAttribute('muted', '');
+            try { el.play(); } catch (e3) {}
+          });
+        }
+        if (!el.paused) started = true;
       }
+
+      // En Smart TVs el hardware decodificador necesita recibir metadata antes de poder reproducir
+      el.addEventListener('canplay', startVideo);
+      el.addEventListener('loadedmetadata', startVideo);
+      try { el.load(); } catch (e) {}
+      startVideo();
       watchStall(el, gen);
     }
 

@@ -124,6 +124,7 @@ async function authorize(req: IncomingMessage): Promise<Access> {
 
 function handleSocket(ws: WebSocket) {
   let alive = true;
+  ws.on("error", () => {}); // Prevenir caídas no capturadas si un TV se desconecta abruptamente
   ws.on("pong", () => (alive = true));
   const ping = setInterval(() => {
     if (!alive) return ws.terminate();

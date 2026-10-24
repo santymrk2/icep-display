@@ -290,7 +290,15 @@ function Layer({
         // eslint-disable-next-line @next/next/no-img-element
         <img src={m.url} alt="" className={cls} />
       ) : (
-        <video src={m.url} controls={controls} className={cls} />
+        <video
+          src={m.url}
+          controls={controls}
+          autoPlay
+          muted
+          playsInline
+          loop
+          className={cls}
+        />
       )}
     </div>
   );
