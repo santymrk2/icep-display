@@ -25,8 +25,17 @@ async function runMigrations() {
   await sql.end();
 }
 
-/** /files/* se sirve desde MinIO a través de este servidor (con soporte de Range para videos). */
+/** /files/* se sirve desde MinIO a través de este servidor (con soporte de Range para videos y CORS para reproductores y MSX). */
 function proxyToMinio(req: IncomingMessage, res: import("node:http").ServerResponse) {
+  const corsHeaders: Record<string, string> = {
+    "access-control-allow-origin": "*",
+    "access-control-allow-methods": "GET, HEAD, OPTIONS",
+    "access-control-allow-headers": "Range, If-None-Match, If-Modified-Since, Content-Type, Accept",
+    "access-control-expose-headers": "Content-Range, Accept-Ranges, Content-Length, Content-Type",
+  };
+  if (req.method === "OPTIONS") {
+    return void res.writeHead(204, corsHeaders).end();
+  }
   const path = `/${BUCKET}${req.url!.slice("/files".length).split("?")[0]}`;
   const headers: Record<string, string> = {};
   for (const h of ["range", "if-none-match", "if-modified-since"]) {
@@ -34,7 +43,7 @@ function proxyToMinio(req: IncomingMessage, res: import("node:http").ServerRespo
     if (typeof v === "string") headers[h] = v;
   }
   const upstream = httpRequest({ host: minioHost, port: minioPort, path, method: req.method, headers }, (up) => {
-    const out: Record<string, string | string[]> = {};
+    const out: Record<string, string | string[]> = { ...corsHeaders };
     for (const h of ["content-type", "content-length", "content-range", "accept-ranges", "etag", "last-modified"]) {
       const v = up.headers[h];
       if (v !== undefined) out[h] = v;
@@ -44,7 +53,7 @@ function proxyToMinio(req: IncomingMessage, res: import("node:http").ServerRespo
     up.pipe(res);
   });
   upstream.on("error", () => {
-    res.writeHead(502).end();
+    res.writeHead(502, corsHeaders).end();
   });
   upstream.end();
 }
@@ -163,7 +172,7 @@ async function main() {
   await app.prepare();
 
   const server = createServer((req, res) => {
-    if (req.url?.startsWith("/files/") && (req.method === "GET" || req.method === "HEAD")) {
+    if (req.url?.startsWith("/files/") && (req.method === "GET" || req.method === "HEAD" || req.method === "OPTIONS")) {
       return proxyToMinio(req, res);
     }
     const msxPath = req.url?.split("?")[0];
