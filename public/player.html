@@ -9,22 +9,12 @@
   html { background: #000 !important; }
   html, body { margin: 0; padding: 0; width: 100%; height: 100%; background: #000 !important; overflow: hidden; cursor: none; }
   body { font-family: Arial, Helvetica, sans-serif; color: #fff; background: #000 !important; }
-  #stage { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: #000; overflow: hidden; }
+  #stage { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: #000 !important; overflow: hidden; }
   #stage { -webkit-transform-origin: 0 0; transform-origin: 0 0; }
-  /* Wrapper negro que ocupa todo el stage; el media se centra dentro con flexbox */
-  .media-wrap { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: #000;
-                display: -webkit-box; display: -webkit-flex; display: flex;
-                -webkit-box-align: center; -webkit-align-items: center; align-items: center;
-                -webkit-box-pack: center; -webkit-justify-content: center; justify-content: center; }
-  /* Modo contain (por defecto): el media nunca desborda y mantiene su aspecto */
-  .media-wrap .media { display: block; max-width: 100%; max-height: 100%; width: auto; height: auto;
-                       border: none; outline: none; background: #000; }
-  /* Modo cover: el media llena el contenedor sin barras negras */
-  .media-wrap.cover .media { width: 100%; height: 100%; -o-object-fit: cover; object-fit: cover; }
-  /* Fallback si el navegador no soporta flexbox (TVs muy antiguos) */
-  .media-wrap .media { position: static; }
-  .media-wrap.fade { opacity: 0; -webkit-transition: opacity 0.8s ease; transition: opacity 0.8s ease; }
-  .media-wrap.fade.in { opacity: 1; }
+  .media { position: absolute; top: 0; left: 0; width: 100%; height: 100%; -webkit-object-fit: contain; -o-object-fit: contain; object-fit: contain; background: #000; border: none; outline: none; }
+  .media.cover { -webkit-object-fit: cover; -o-object-fit: cover; object-fit: cover; }
+  .media.fade { opacity: 0; -webkit-transition: opacity 0.8s ease; transition: opacity 0.8s ease; }
+  .media.fade.in { opacity: 1; }
   .bg { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: #000 center center no-repeat; background-size: cover; }
   #msg { position: absolute; top: 0; left: 0; width: 100%; height: 100%; text-align: center; display: none; }
   #msg .inner { position: absolute; top: 50%; left: 0; width: 100%; margin-top: -14vw; }
@@ -131,9 +121,7 @@
     if (currentTimer) { clearTimeout(currentTimer); currentTimer = null; }
     while (stage.firstChild) {
       var el = stage.firstChild;
-      // el puede ser un .media-wrap (div) o un elemento legacy; buscar el video dentro si existe.
-      var vid = el.tagName === 'VIDEO' ? el : el.querySelector ? el.querySelector('video') : null;
-      if (vid) { try { vid.pause(); vid.removeAttribute('src'); vid.load(); } catch (e) {} }
+      if (el.tagName === 'VIDEO') { try { el.pause(); el.removeAttribute('src'); el.load(); } catch (e) {} }
       stage.removeChild(el);
     }
     currentEl = null;
@@ -198,20 +186,16 @@
     function next() { advance(gen, my); }
     var item = playlist[index];
     var single = playlist.length === 1;
-    var el, wrap;
-
-    // Wrapper negro que centra el contenido y evita bordes blancos en TVs que no soportan object-fit.
-    wrap = document.createElement('div');
-    wrap.className = 'media-wrap' + (item.fit === 'cover' ? ' cover' : '');
+    var el;
 
     if (item.kind === 'image') {
       el = document.createElement('img');
-      el.className = 'media';
+      el.className = 'media' + (item.fit === 'cover' ? ' cover' : '');
       el.onerror = function () { currentTimer = setTimeout(next, 2000); };
       el.src = item.url;
     } else {
       el = document.createElement('video');
-      el.className = 'media';
+      el.className = 'media' + (item.fit === 'cover' ? ' cover' : '');
       var withSound = !!item.sound;
       el.muted = !withSound;
       el.defaultMuted = !withSound;
@@ -224,16 +208,7 @@
       el.onended = next;
       el.onerror = function () { currentTimer = setTimeout(next, 2000); };
       el.src = item.url;
-      var p = null;
-      try { p = el.play(); } catch (e) {}
-      if (p && p.catch) p.catch(function () {
-        // El navegador no deja reproducir con sonido sin interacción: seguir silenciado.
-        if (!el.muted) { el.muted = true; try { el.play(); } catch (e) {} }
-      });
-      watchStall(el, gen);
     }
-
-    wrap.appendChild(el);
 
     // Reemplazo sin parpadeo: se agrega el nuevo elemento y luego se quita el anterior.
     var old = currentEl;
@@ -245,21 +220,34 @@
       var sw = stage.offsetWidth || 1, sh = stage.offsetHeight || 1;
       var sc = (rot === 90 || rot === 270) ? Math.min(sw / sh, sh / sw) : 1;
       var tf = 'rotate(' + rot + 'deg) scale(' + (fx * sc) + ',' + (fy * sc) + ')';
-      wrap.style.webkitTransform = tf; wrap.style.transform = tf;
+      el.style.webkitTransform = tf; el.style.transform = tf;
     }
-    if (fade) wrap.className += ' fade';
-    stage.appendChild(wrap);
-    currentEl = wrap;
+    if (fade) el.className += ' fade';
+    stage.appendChild(el);
+    currentEl = el;
+
+    // Si es video, iniciar reproducción una vez agregado al DOM
+    if (item.kind !== 'image') {
+      var p = null;
+      try { p = el.play(); } catch (e) {}
+      if (p && p.catch) {
+        p.catch(function () {
+          // El navegador no deja reproducir con sonido sin interacción: seguir silenciado.
+          if (!el.muted) { el.muted = true; try { el.play(); } catch (e) {} }
+        });
+      }
+      watchStall(el, gen);
+    }
+
     function dropOld() {
       if (old && old.parentNode === stage) {
-        var oldVideo = old.querySelector ? old.querySelector('video') : (old.tagName === 'VIDEO' ? old : null);
-        if (oldVideo) { try { oldVideo.pause(); oldVideo.removeAttribute('src'); oldVideo.load(); } catch (e) {} }
+        if (old.tagName === 'VIDEO') { try { old.pause(); old.removeAttribute('src'); old.load(); } catch (e) {} }
         stage.removeChild(old);
       }
     }
     if (fade) {
       // Disuelve: el nuevo aparece encima del anterior; el anterior se quita al terminar.
-      setTimeout(function () { wrap.className += ' in'; }, 30);
+      setTimeout(function () { el.className += ' in'; }, 30);
       setTimeout(dropOld, 900);
     } else {
       dropOld();
@@ -277,7 +265,7 @@
   function watchStall(video, gen) {
     var last = -1, stuck = 0;
     var iv = setInterval(function () {
-      if (gen !== generation) { clearInterval(iv); return; }
+      if (gen !== generation || video !== currentEl) { clearInterval(iv); return; }
       if (video.paused && video.readyState >= 2) { try { video.play(); } catch (e) {} }
       if (video.currentTime === last) stuck++; else { stuck = 0; last = video.currentTime; }
       if (stuck >= 4) {
