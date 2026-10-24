@@ -5,14 +5,24 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Cartelería</title>
 <style>
-  html, body { margin: 0; padding: 0; width: 100%; height: 100%; background: #000; overflow: hidden; cursor: none; }
-  body { font-family: Arial, Helvetica, sans-serif; color: #fff; }
-  #stage { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: #000; }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html { background: #000 !important; }
+  html, body { margin: 0; padding: 0; width: 100%; height: 100%; background: #000 !important; overflow: hidden; cursor: none; }
+  body { font-family: Arial, Helvetica, sans-serif; color: #fff; background: #000 !important; }
+  #stage { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: #000; overflow: hidden; }
   #stage { -webkit-transform-origin: 0 0; transform-origin: 0 0; }
-  .media { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: contain; background: #000; }
-  .media.cover { object-fit: cover; }
-  .media.fade { opacity: 0; -webkit-transition: opacity 0.8s ease; transition: opacity 0.8s ease; }
-  .media.fade.in { opacity: 1; }
+  /* Wrapper negro que ocupa todo el stage; el media se centra dentro con flexbox */
+  .media-wrap { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: #000;
+                display: -webkit-box; display: -webkit-flex; display: flex;
+                -webkit-box-align: center; -webkit-align-items: center; align-items: center;
+                -webkit-box-pack: center; -webkit-justify-content: center; justify-content: center; }
+  /* Modo contain (por defecto): el media nunca desborda y mantiene su aspecto */
+  .media-wrap .media { display: block; max-width: 100%; max-height: 100%; width: auto; height: auto;
+                       border: none; outline: none; background: #000; }
+  /* Modo cover: el media llena el contenedor sin barras negras */
+  .media-wrap.cover .media { width: 100%; height: 100%; -o-object-fit: cover; object-fit: cover; }
+  .media-wrap.fade { opacity: 0; -webkit-transition: opacity 0.8s ease; transition: opacity 0.8s ease; }
+  .media-wrap.fade.in { opacity: 1; }
   .bg { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: #000 center center no-repeat; background-size: cover; }
   #msg { position: absolute; top: 0; left: 0; width: 100%; height: 100%; text-align: center; display: none; }
   #msg .inner { position: absolute; top: 50%; left: 0; width: 100%; margin-top: -14vw; }
@@ -119,7 +129,9 @@
     if (currentTimer) { clearTimeout(currentTimer); currentTimer = null; }
     while (stage.firstChild) {
       var el = stage.firstChild;
-      if (el.tagName === 'VIDEO') { try { el.pause(); el.removeAttribute('src'); el.load(); } catch (e) {} }
+      // el puede ser un .media-wrap (div) o un elemento legacy; buscar el video dentro si existe.
+      var vid = el.tagName === 'VIDEO' ? el : el.querySelector ? el.querySelector('video') : null;
+      if (vid) { try { vid.pause(); vid.removeAttribute('src'); vid.load(); } catch (e) {} }
       stage.removeChild(el);
     }
     currentEl = null;
@@ -179,16 +191,20 @@
     var gen = generation;
     var item = playlist[index];
     var single = playlist.length === 1;
-    var el;
+    var el, wrap;
+
+    // Wrapper negro que centra el contenido y evita bordes blancos en TVs que no soportan object-fit.
+    wrap = document.createElement('div');
+    wrap.className = 'media-wrap' + (item.fit === 'cover' ? ' cover' : '');
 
     if (item.kind === 'image') {
       el = document.createElement('img');
-      el.className = 'media' + (item.fit === 'cover' ? ' cover' : '');
+      el.className = 'media';
       el.onerror = function () { currentTimer = setTimeout(function () { advance(gen); }, 2000); };
       el.src = item.url;
     } else {
       el = document.createElement('video');
-      el.className = 'media' + (item.fit === 'cover' ? ' cover' : '');
+      el.className = 'media';
       el.muted = true;
       el.defaultMuted = true;
       el.setAttribute('muted', '');
@@ -205,6 +221,8 @@
       watchStall(el, gen);
     }
 
+    wrap.appendChild(el);
+
     // Reemplazo sin parpadeo: se agrega el nuevo elemento y luego se quita el anterior.
     var old = currentEl;
     var tr = item.transition || (dissolve ? 'dissolve' : 'cut');
@@ -215,20 +233,21 @@
       var sw = stage.offsetWidth || 1, sh = stage.offsetHeight || 1;
       var sc = (rot === 90 || rot === 270) ? Math.min(sw / sh, sh / sw) : 1;
       var tf = 'rotate(' + rot + 'deg) scale(' + (fx * sc) + ',' + (fy * sc) + ')';
-      el.style.webkitTransform = tf; el.style.transform = tf;
+      wrap.style.webkitTransform = tf; wrap.style.transform = tf;
     }
-    if (fade) el.className += ' fade';
-    stage.appendChild(el);
-    currentEl = el;
+    if (fade) wrap.className += ' fade';
+    stage.appendChild(wrap);
+    currentEl = wrap;
     function dropOld() {
       if (old && old.parentNode === stage) {
-        if (old.tagName === 'VIDEO') { try { old.pause(); old.removeAttribute('src'); old.load(); } catch (e) {} }
+        var oldVideo = old.querySelector('video');
+        if (oldVideo) { try { oldVideo.pause(); oldVideo.removeAttribute('src'); oldVideo.load(); } catch (e) {} }
         stage.removeChild(old);
       }
     }
     if (fade) {
       // Disuelve: el nuevo aparece encima del anterior; el anterior se quita al terminar.
-      setTimeout(function () { el.className += ' in'; }, 30);
+      setTimeout(function () { wrap.className += ' in'; }, 30);
       setTimeout(dropOld, 900);
     } else {
       dropOld();
@@ -243,10 +262,11 @@
   }
 
   // Si un video se queda trabado (sin avanzar) por más de 20 s, se salta al siguiente o se reintenta.
+  // currentWrap es el .media-wrap que contiene el video (currentEl al momento de llamar a watchStall).
   function watchStall(video, gen) {
     var last = -1, stuck = 0;
     var iv = setInterval(function () {
-      if (gen !== generation || video !== currentEl) { clearInterval(iv); return; }
+      if (gen !== generation) { clearInterval(iv); return; }
       if (video.paused && video.readyState >= 2) { try { video.play(); } catch (e) {} }
       if (video.currentTime === last) stuck++; else { stuck = 0; last = video.currentTime; }
       if (stuck >= 4) {
