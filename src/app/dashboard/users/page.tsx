@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "@/lib/client";
 import { useMe } from "@/components/Session";
+import { useDialogs } from "@/components/Dialogs";
+import { toast } from "sonner";
 
 type UserDTO = { id: string; username: string; role: "admin" | "operator"; createdAt: string };
 
@@ -12,21 +14,20 @@ export default function UsersPage() {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [role, setRole] = useState<"admin" | "operator">("operator");
-  const [msg, setMsg] = useState<string | null>(null);
+  const dialogs = useDialogs();
 
   const load = useCallback(async () => setUsers(await api<UserDTO[]>("/api/users")), []);
   useEffect(() => {
-    void load().catch((e) => setMsg((e as Error).message));
+    void load().catch((e) => toast.error((e as Error).message));
   }, [load]);
 
   async function run(fn: () => Promise<unknown>, ok?: string) {
-    setMsg(null);
     try {
       await fn();
-      if (ok) setMsg(ok);
+      if (ok) toast.success(ok);
       await load();
     } catch (e) {
-      setMsg((e as Error).message);
+      toast.error((e as Error).message);
     }
   }
 
@@ -66,7 +67,6 @@ export default function UsersPage() {
           Crear
         </button>
       </form>
-      {msg && <p className="text-sm text-zinc-300">{msg}</p>}
 
       <div className="table-shell">
         <table>
@@ -96,8 +96,15 @@ export default function UsersPage() {
                 <td className="space-x-2 text-right">
                   <button
                     className="btn"
-                    onClick={() => {
-                      const pw = prompt(`Nueva contraseña para ${u.username} (8+ caracteres)`);
+                    onClick={async () => {
+                      const pw = await dialogs.prompt({
+                        title: "Cambiar contraseña",
+                        message: `Nueva contraseña para ${u.username}.`,
+                        label: "Contraseña",
+                        inputType: "password",
+                        confirmLabel: "Guardar",
+                        validate: (v) => (v.length < 8 ? "Tiene que tener al menos 8 caracteres" : null),
+                      });
                       if (pw) void run(() => api(`/api/users/${u.id}`, { method: "PATCH", body: JSON.stringify({ password: pw }) }), "Contraseña actualizada");
                     }}
                   >
@@ -106,7 +113,9 @@ export default function UsersPage() {
                   <button
                     className="btn-danger"
                     disabled={me?.id === u.id}
-                    onClick={() => confirm(`¿Borrar a ${u.username}?`) && run(() => api(`/api/users/${u.id}`, { method: "DELETE" }), "Usuario borrado")}
+                    onClick={async () =>
+                      (await dialogs.confirm({ title: "Borrar usuario", message: `¿Borrar a ${u.username}? No se puede deshacer.`, danger: true, confirmLabel: "Borrar" })) &&
+                      run(() => api(`/api/users/${u.id}`, { method: "DELETE" }), "Usuario borrado")}
                   >
                     Borrar
                   </button>

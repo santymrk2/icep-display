@@ -43,6 +43,34 @@
       "when": 1792017729459,
       "tag": "0005_calendars_recurrence_folders",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1792079203620,
+      "tag": "0006_media_subfolders",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1792080429880,
+      "tag": "0007_presentation_timing",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1792082544515,
+      "tag": "0008_notion_meetings",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1792105694868,
+      "tag": "0009_meeting_default_time",
+      "breakpoints": true
     }
   ]
 }

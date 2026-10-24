@@ -31,6 +31,7 @@ export async function GET(_req: Request, { params }: Ctx) {
             rotation: item.rotation,
             flipH: item.flipH,
             flipV: item.flipV,
+            sound: item.sound,
             asset: { ...asset, url: publicUrl(asset.objectKey), thumbnailUrl: asset.thumbnailKey ? publicUrl(asset.thumbnailKey) : null },
           }
         : { type: "section" as const, name: item.sectionName ?? "Sección" },
@@ -67,7 +68,9 @@ export async function PUT(req: Request, { params }: Ctx) {
     description?: string | null;
     orientation?: string;
     transition?: string;
-    items: ({ type?: "media"; mediaAssetId: string; durationSeconds: number | null; fit?: string; transition?: string | null; rotation?: number; flipH?: boolean; flipV?: boolean } | { type: "section"; name: string })[];
+    /** null = 10 s. */
+    defaultDurationSeconds?: number | null;
+    items: ({ type?: "media"; mediaAssetId: string; durationSeconds: number | null; fit?: string; transition?: string | null; rotation?: number; flipH?: boolean; flipV?: boolean; sound?: boolean } | { type: "section"; name: string })[];
   };
   if (!body.name?.trim()) return error("Falta el nombre");
   if (body.orientation !== undefined && body.orientation !== "landscape" && body.orientation !== "portrait") return error("Orientación inválida");
@@ -81,6 +84,9 @@ export async function PUT(req: Request, { params }: Ctx) {
         description: body.description?.trim() || null,
         ...(body.orientation ? { orientation: body.orientation as "landscape" | "portrait" } : {}),
         ...(body.transition ? { transition: body.transition as "cut" | "dissolve" } : {}),
+        ...(body.defaultDurationSeconds !== undefined
+          ? { defaultDurationSeconds: body.defaultDurationSeconds && body.defaultDurationSeconds > 0 ? Math.round(body.defaultDurationSeconds) : null }
+          : {}),
         updatedAt: new Date(),
       })
       .where(eq(presentations.id, id));
@@ -99,6 +105,7 @@ export async function PUT(req: Request, { params }: Ctx) {
                 rotation: it.rotation === 90 || it.rotation === 180 || it.rotation === 270 ? it.rotation : 0,
                 flipH: it.flipH === true,
                 flipV: it.flipV === true,
+                sound: it.sound === true,
                 durationSeconds: it.durationSeconds && it.durationSeconds > 0 ? Math.round(it.durationSeconds) : null,
               },
         ),

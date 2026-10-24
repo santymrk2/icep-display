@@ -1,6 +1,7 @@
 import { sql } from "drizzle-orm";
 import {
   pgTable,
+  type AnyPgColumn,
   uuid,
   text,
   integer,
@@ -26,6 +27,8 @@ export const userRole = pgEnum("user_role", ["admin", "operator"]);
 export const mediaFolders = pgTable("media_folders", {
   id: uuid("id").primaryKey().defaultRandom(),
   name: text("name").notNull(),
+  /** Carpeta que la contiene; null = raíz ("Mi biblioteca"). */
+  parentId: uuid("parent_id").references((): AnyPgColumn => mediaFolders.id, { onDelete: "set null" }),
   /** Color del ícono de la carpeta (hex). */
   color: text("color").notNull().default("#3b82f6"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -66,6 +69,8 @@ export const presentations = pgTable("presentations", {
   /** Orientación de pantalla para la que se diseñó la presentación. */
   orientation: orientation("orientation").notNull().default("landscape"),
   transition: transitionKind("transition").notNull().default("cut"),
+  /** Segundos que dura cada imagen sin duración propia; null = 10 s. */
+  defaultDurationSeconds: integer("default_duration_seconds"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
@@ -89,6 +94,8 @@ export const presentationItems = pgTable(
     rotation: smallint("rotation").notNull().default(0),
     flipH: boolean("flip_h").notNull().default(false),
     flipV: boolean("flip_v").notNull().default(false),
+    /** Videos: reproducir con sonido (si el navegador de la pantalla lo permite). */
+    sound: boolean("sound").notNull().default(false),
     position: integer("position").notNull(),
     /** Duración para imágenes. Los videos usan su duración real si es null. */
     durationSeconds: integer("duration_seconds"),
@@ -165,6 +172,29 @@ export const schedules = pgTable("schedules", {
   rrule: text("rrule"),
   priority: integer("priority").notNull().default(0),
   enabled: boolean("enabled").notNull().default(true),
+  /** Reunión de Notion de la que sale este evento (null = creado a mano). Se sincroniza solo. */
+  notionPageId: text("notion_page_id").unique(),
+  meetingTypeId: uuid("meeting_type_id").references((): AnyPgColumn => meetingTypes.id, { onDelete: "cascade" }),
+});
+
+/**
+ * Tipos de reunión de Notion (ej. "Reunión de oración"). Notion solo trae el inicio; acá se define
+ * cuánto antes empieza a mostrarse, cuánto después termina y qué presentación usar.
+ */
+export const meetingTypes = pgTable("meeting_types", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  /** Nombre tal cual aparece en Notion. */
+  name: text("name").notNull().unique(),
+  /** Sin presentación no se crean eventos para este tipo. */
+  presentationId: uuid("presentation_id").references(() => presentations.id, { onDelete: "set null" }),
+  /** null = el primer calendario. */
+  calendarId: uuid("calendar_id").references(() => calendars.id, { onDelete: "set null" }),
+  /** Hora de inicio si en Notion la reunión tiene solo fecha ("HH:MM:SS"); null = se ignora. */
+  defaultStartTime: time("default_start_time"),
+  minutesBefore: integer("minutes_before").notNull().default(60),
+  minutesAfter: integer("minutes_after").notNull().default(150),
+  enabled: boolean("enabled").notNull().default(true),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
 /** Pantallas a las que apunta un bloque (varias a la vez). Sin filas ni grupo = todas las pantallas. */

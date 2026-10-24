@@ -3,12 +3,47 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { api, formatBytes, type DeviceDTO, type FolderDTO, type MediaDTO } from "@/lib/client";
+import { toast } from "sonner";
 import { IconClose, IconFolder, IconMedia, IconPlus, IconSearch } from "@/components/Icons";
+import { useDialogs } from "@/components/Dialogs";
 
 type Upload = { name: string; progress: number; error?: string };
-type Flash = { error: boolean; text: string };
+const UPLOAD_TOAST = "media-upload";
+
+/** Contenido del aviso flotante mientras se suben archivos. */
+function UploadToast({ uploads }: { uploads: Upload[] }) {
+  const done = uploads.filter((u) => u.progress >= 1 || u.error).length;
+  return (
+    <div className="w-[356px] rounded-xl border border-line bg-panel text-sm text-zinc-100 shadow-2xl">
+      <div className="border-b border-line px-4 py-2.5 font-medium">
+        Subiendo {done}/{uploads.length} {uploads.length === 1 ? "archivo" : "archivos"}
+      </div>
+      <ul className="max-h-60 divide-y divide-line overflow-auto">
+        {uploads.map((u, i) => (
+          <li key={i} className="space-y-1.5 px-4 py-2.5">
+            <div className="flex items-center gap-3">
+              <span className="min-w-0 flex-1 truncate">{u.name}</span>
+              {u.error ? (
+                <span className="text-red-400">Error</span>
+              ) : (
+                <span className="tabular-nums text-zinc-400">{Math.round(u.progress * 100)}%</span>
+              )}
+            </div>
+            {!u.error && (
+              <div className="h-1 overflow-hidden rounded-full bg-raised">
+                <div className="h-full bg-accent transition-[width]" style={{ width: `${u.progress * 100}%` }} />
+              </div>
+            )}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
 /** Menú de acciones de una fila. key = "a:<assetId>" o "f:<folderId>". */
 type Menu = { key: string; view: "main" | "move" | "color"; top: number; right: number };
+/** Carpeta con su ruta completa ("Eventos / 2026") para los menús de mover. */
+type FolderOption = { folder: FolderDTO; path: string };
 /** Datos que se miden en el navegador antes de subir el archivo. */
 type Probe = { duration: number | null; width: number | null; height: number | null; thumb: Blob | null };
 
@@ -152,6 +187,7 @@ const fmtResolution = (m: MediaDTO) => (m.width && m.height ? `${m.width}×${m.h
 const menuItem = "flex w-full items-center px-4 py-2 text-left hover:bg-raised disabled:opacity-40 disabled:hover:bg-transparent";
 const FOLDER_COLORS = ["#2492ff", "#ff9f43", "#2ec4b6", "#a78bfa", "#f472b6", "#ef4444", "#facc15", "#9ca3af"];
 const MEDIA_DRAG = "application/x-media-ids";
+const FOLDER_DRAG = "application/x-media-folder-id";
 
 type SortKey = "name" | "type" | "date";
 
@@ -186,9 +222,11 @@ export default function MediaPage() {
   const [bulkMove, setBulkMove] = useState(false);
   const [menu, setMenu] = useState<Menu | null>(null);
   const [inspectId, setInspectId] = useState<string | null>(null);
-  const [flash, setFlash] = useState<Flash | null>(null);
+  const dialogs = useDialogs();
   const fileInput = useRef<HTMLInputElement>(null);
   const dragDepth = useRef(0);
+  /** Carpeta que se está arrastrando: durante dragover el navegador no deja leer los datos del arrastre. */
+  const dragFolder = useRef<string | null>(null);
 
   const load = useCallback(async () => {
     const [m, f] = await Promise.all([api<MediaDTO[]>("/api/media"), api<FolderDTO[]>("/api/media/folders")]);
@@ -197,18 +235,17 @@ export default function MediaPage() {
   }, []);
 
   useEffect(() => {
-    load().catch((err: Error) => setFlash({ error: true, text: err.message }));
+    load().catch((err: Error) => toast.error(err.message));
     void api<DeviceDTO[]>("/api/devices").then(setDevices).catch(() => {});
   }, [load]);
 
   /** Ejecuta una acción mostrando el resultado o el error en el aviso superior. */
   async function run(fn: () => Promise<string | void>) {
-    setFlash(null);
     try {
       const ok = await fn();
-      if (ok) setFlash({ error: false, text: ok });
+      if (ok) toast.success(ok);
     } catch (err) {
-      setFlash({ error: true, text: (err as Error).message });
+      toast.error((err as Error).message);
     }
   }
 
@@ -224,6 +261,7 @@ export default function MediaPage() {
     if (list.length === 0) return;
     const dest = folderId; // la carpeta donde se soltó, aunque el usuario navegue después
     setUploads(list.map((f) => ({ name: f.name, progress: 0 })));
+    let failed: Upload[] = [];
     // De a uno para no saturar la red con varios 4K en paralelo.
     for (const [i, f] of list.entries()) {
       const setItem = (patch: Partial<Upload>) => setUploads((u) => u.map((x, j) => (j === i ? { ...x, ...patch } : x)));
@@ -236,10 +274,29 @@ export default function MediaPage() {
         setItem({ progress: 1 });
       } catch (err) {
         setItem({ error: (err as Error).message });
+        failed = [...failed, { name: f.name, progress: 0, error: (err as Error).message }];
       }
     }
     await load().catch(() => {});
+    setUploads([]);
+    // El aviso de progreso es personalizado; se cierra y el resultado va en un aviso normal.
+    toast.dismiss(UPLOAD_TOAST);
+    const ok = list.length - failed.length;
+    if (failed.length === 0) {
+      toast.success(ok === 1 ? `"${list[0].name}" subido` : `${ok} archivos subidos`, { duration: 4000 });
+    } else {
+      toast.error(ok > 0 ? `${ok} subidos, ${failed.length} con error` : failed.length === 1 ? "No se pudo subir el archivo" : "No se pudieron subir los archivos", {
+        duration: 10000,
+        description: failed.map((u) => `${u.name}: ${u.error}`).join("\n"),
+      });
+    }
   }
+
+  // Progreso de subida como aviso flotante (abajo a la derecha) en vez de ocupar la página.
+  useEffect(() => {
+    if (uploads.length === 0) return;
+    toast.custom(() => <UploadToast uploads={uploads} />, { id: UPLOAD_TOAST, duration: Infinity });
+  }, [uploads]);
 
   // Arrastrar archivos del sistema: se cuentan entradas/salidas para que el resaltado no parpadee.
   const isFileDrag = (e: React.DragEvent) => Array.from(e.dataTransfer.types).includes("Files");
@@ -265,19 +322,33 @@ export default function MediaPage() {
     void handleFiles(e.dataTransfer.files);
   }
 
-  /** Arrastrar una fila de medio hacia una carpeta (o hacia "Mi biblioteca"). */
-  const isRowDrag = (e: React.DragEvent) => Array.from(e.dataTransfer.types).includes(MEDIA_DRAG);
+  /** Arrastrar filas de medios o una carpeta hacia una carpeta (o hacia "Mi biblioteca"). */
+  const isRowDrag = (e: React.DragEvent) => {
+    const types = Array.from(e.dataTransfer.types);
+    return types.includes(MEDIA_DRAG) || types.includes(FOLDER_DRAG);
+  };
+  /** Una carpeta no puede caer en sí misma, en una subcarpeta suya ni donde ya está. */
+  const canDropFolder = (id: string, dest: string | null) =>
+    dest === null ? byId.get(id)?.parentId !== null : !isInside(dest, id) && byId.get(id)?.parentId !== dest;
   function dropOnFolder(e: React.DragEvent, dest: string | null) {
     if (!isRowDrag(e)) return;
     e.preventDefault();
     e.stopPropagation();
     setDropFolder(null);
+    const folder = e.dataTransfer.getData(FOLDER_DRAG);
+    if (folder) {
+      dragFolder.current = null;
+      const f = byId.get(folder);
+      if (f && canDropFolder(f.id, dest)) moveFolder(f, dest);
+      return;
+    }
     const ids = (e.dataTransfer.getData(MEDIA_DRAG) || "").split(",").filter(Boolean);
     moveAssets(media.filter((m) => ids.includes(m.id)), dest);
   }
   const folderDropProps = (dest: string | null) => ({
     onDragOver: (e: React.DragEvent) => {
       if (!isRowDrag(e)) return;
+      if (dragFolder.current && !canDropFolder(dragFolder.current, dest)) return;
       e.preventDefault();
       e.stopPropagation();
       setDropFolder(dest ?? "root");
@@ -286,22 +357,23 @@ export default function MediaPage() {
     onDrop: (e: React.DragEvent) => dropOnFolder(e, dest),
   });
 
-  function createFolder() {
-    const name = window.prompt("Nombre de la nueva carpeta")?.trim();
+  async function createFolder() {
+    const name = await dialogs.prompt({ title: "Nueva carpeta", label: "Nombre", placeholder: "Ej.: Anuncios", confirmLabel: "Crear" });
     if (!name) return;
     void run(async () => {
-      await api("/api/media/folders", { method: "POST", body: JSON.stringify({ name }) });
+      await api("/api/media/folders", { method: "POST", body: JSON.stringify({ name, parentId: folderId }) });
       await load();
       return `Carpeta "${name}" creada`;
     });
   }
 
-  function renameFolder(f: FolderDTO) {
-    const name = window.prompt("Nuevo nombre de la carpeta", f.name)?.trim();
+  async function renameFolder(f: FolderDTO) {
+    const name = await dialogs.prompt({ title: "Renombrar carpeta", label: "Nombre", defaultValue: f.name, confirmLabel: "Guardar" });
     if (!name || name === f.name) return;
     void run(async () => {
       await api(`/api/media/folders/${f.id}`, { method: "PATCH", body: JSON.stringify({ name }) });
       await load();
+      return "Carpeta renombrada";
     });
   }
 
@@ -312,20 +384,34 @@ export default function MediaPage() {
     });
   }
 
-  function renameAsset(m: MediaDTO) {
-    const name = window.prompt("Nuevo nombre", m.originalName)?.trim();
+  async function renameAsset(m: MediaDTO) {
+    const name = await dialogs.prompt({ title: "Renombrar archivo", label: "Nombre", defaultValue: m.originalName, confirmLabel: "Guardar" });
     if (!name || name === m.originalName) return;
     void run(async () => {
       await api(`/api/media/${m.id}`, { method: "PATCH", body: JSON.stringify({ name }) });
       await load();
+      return "Archivo renombrado";
     });
   }
 
-  function deleteFolder(f: FolderDTO) {
-    if (!confirm(`¿Eliminar la carpeta "${f.name}"? Los archivos que contiene se mantienen en Mi biblioteca.`)) return;
+  function moveFolder(f: FolderDTO, dest: string | null) {
+    void run(async () => {
+      await api(`/api/media/folders/${f.id}`, { method: "PATCH", body: JSON.stringify({ parentId: dest }) });
+      await load();
+      return `Carpeta "${f.name}" movida a ${folderName(dest)}`;
+    });
+  }
+
+  async function deleteFolder(f: FolderDTO) {
+    const ok = await dialogs.confirm({
+      title: "Eliminar carpeta",
+      message: `¿Eliminar la carpeta "${f.name}"? Los archivos y subcarpetas que contiene pasan a ${folderName(f.parentId)}.`,
+      danger: true,
+    });
+    if (!ok) return;
     void run(async () => {
       await api(`/api/media/folders/${f.id}`, { method: "DELETE" });
-      if (folderId === f.id) setFolderId(null);
+      if (folderId === f.id) setFolderId(f.parentId);
       await load();
       return `Carpeta "${f.name}" eliminada`;
     });
@@ -338,14 +424,19 @@ export default function MediaPage() {
       await Promise.all(items.map((m) => api(`/api/media/${m.id}`, { method: "PATCH", body: JSON.stringify({ folderId: dest }) })));
       setSelected(new Set());
       await load();
-      const where = dest ? folders.find((f) => f.id === dest)?.name : "Mi biblioteca";
+      const where = folderName(dest);
       return items.length === 1 ? `"${items[0].originalName}" movido a ${where}` : `${items.length} archivos movidos a ${where}`;
     });
   }
 
-  function removeAssets(list: MediaDTO[]) {
+  async function removeAssets(list: MediaDTO[]) {
     if (list.length === 0) return;
-    if (!confirm(list.length === 1 ? `¿Eliminar "${list[0].originalName}"?` : `¿Eliminar ${list.length} archivos?`)) return;
+    const ok = await dialogs.confirm({
+      title: list.length === 1 ? "Eliminar archivo" : "Eliminar archivos",
+      message: list.length === 1 ? `¿Eliminar "${list[0].originalName}"? No se puede deshacer.` : `¿Eliminar ${list.length} archivos? No se puede deshacer.`,
+      danger: true,
+    });
+    if (!ok) return;
     void run(async () => {
       await Promise.all(list.map((m) => api(`/api/media/${m.id}`, { method: "DELETE" })));
       setSelected(new Set());
@@ -404,9 +495,27 @@ export default function MediaPage() {
   }
 
   const q = query.trim().toLowerCase();
-  const currentFolder = folders.find((f) => f.id === folderId) ?? null;
+  const byId = new Map(folders.map((f) => [f.id, f]));
+  const currentFolder = (folderId && byId.get(folderId)) || null;
+  /** Carpetas desde la raíz hasta `id` inclusive (el `seen` corta un ciclo si la base quedara inconsistente). */
+  function ancestry(id: string | null) {
+    const chain: FolderDTO[] = [];
+    const seen = new Set<string>();
+    for (let f = id ? byId.get(id) : undefined; f && !seen.has(f.id); f = f.parentId ? byId.get(f.parentId) : undefined) {
+      seen.add(f.id);
+      chain.unshift(f);
+    }
+    return chain;
+  }
+  /** true si `id` es `ancestor` o está dentro de él, a cualquier profundidad. */
+  const isInside = (id: string, ancestor: string) => ancestry(id).some((f) => f.id === ancestor);
+  const folderName = (id: string | null) => (id ? byId.get(id)?.name ?? "la carpeta" : "Mi biblioteca");
   const cmpText = (a: string, b: string) => a.localeCompare(b, "es", { sensitivity: "base", numeric: true });
-  const visibleFolders = (folderId === null ? folders.filter((f) => !q || f.name.toLowerCase().includes(q)) : []).sort((a, b) =>
+  const folderOptions: FolderOption[] = folders
+    .map((folder) => ({ folder, path: ancestry(folder.id).map((f) => f.name).join(" / ") }))
+    .sort((a, b) => cmpText(a.path, b.path));
+  const breadcrumb = ancestry(folderId);
+  const visibleFolders = folders.filter((f) => f.parentId === folderId && (!q || f.name.toLowerCase().includes(q))).sort((a, b) =>
     sort.key === "date" ? sort.dir * (+new Date(a.createdAt) - +new Date(b.createdAt)) : sort.key === "name" ? sort.dir * cmpText(a.name, b.name) : cmpText(a.name, b.name),
   );
   const visibleMedia = media
@@ -497,11 +606,30 @@ export default function MediaPage() {
 
         {folderId !== null && (
           <nav className="mt-4 flex flex-wrap items-center gap-2 text-sm">
-            <button className="text-accent hover:underline" onClick={() => openFolder(null)} {...folderDropProps(null)}>
+            <button
+              className={`rounded px-1 text-accent hover:underline ${dropFolder === "root" ? "bg-accent/25" : ""}`}
+              onClick={() => openFolder(null)}
+              {...folderDropProps(null)}
+            >
               ← Mi biblioteca
             </button>
-            <span className="text-zinc-600">/</span>
-            <span className="font-medium">{currentFolder?.name ?? "Carpeta no encontrada"}</span>
+            {breadcrumb.map((f) => (
+              <span key={f.id} className="flex items-center gap-2">
+                <span className="text-zinc-600">/</span>
+                {f.id === folderId ? (
+                  <span className="font-medium">{f.name}</span>
+                ) : (
+                  <button
+                    className={`rounded px-1 text-accent hover:underline ${dropFolder === f.id ? "bg-accent/25" : ""}`}
+                    onClick={() => openFolder(f.id)}
+                    {...folderDropProps(f.id)}
+                  >
+                    {f.name}
+                  </button>
+                )}
+              </span>
+            ))}
+            {!currentFolder && <span className="font-medium">Carpeta no encontrada</span>}
           </nav>
         )}
 
@@ -548,30 +676,6 @@ export default function MediaPage() {
           </div>
         </div>
 
-        {flash && <p className={`mt-4 text-sm ${flash.error ? "text-red-400" : "text-emerald-400"}`}>{flash.text}</p>}
-
-        {uploads.length > 0 && (
-          <ul className="card mt-4 divide-y divide-line text-sm">
-            {uploads.map((u, i) => (
-              <li key={i} className="space-y-1.5 px-4 py-2.5">
-                <div className="flex items-center gap-3">
-                  <span className="min-w-0 flex-1 truncate">{u.name}</span>
-                  {u.error ? (
-                    <span className="text-red-400">{u.error}</span>
-                  ) : (
-                    <span className="tabular-nums text-zinc-400">{Math.round(u.progress * 100)}%</span>
-                  )}
-                </div>
-                {!u.error && (
-                  <div className="h-1 overflow-hidden rounded-full bg-raised">
-                    <div className="h-full bg-accent transition-[width]" style={{ width: `${u.progress * 100}%` }} />
-                  </div>
-                )}
-              </li>
-            ))}
-          </ul>
-        )}
-
         {selectedAssets.length > 0 && (
           <div className="relative mt-5 flex items-center gap-3 rounded-xl border border-accent/50 bg-accent/10 px-4 py-2 text-sm" onClick={(e) => e.stopPropagation()}>
             <span className="flex-1 font-medium">
@@ -588,11 +692,11 @@ export default function MediaPage() {
                       Mi biblioteca
                     </button>
                   )}
-                  {folders
-                    .filter((f) => f.id !== folderId)
-                    .map((f) => (
-                      <button key={f.id} className={menuItem} onClick={() => (setBulkMove(false), moveAssets(selectedAssets, f.id))}>
-                        <span className="truncate">{f.name}</span>
+                  {folderOptions
+                    .filter(({ folder }) => folder.id !== folderId)
+                    .map(({ folder, path }) => (
+                      <button key={folder.id} className={menuItem} title={path} onClick={() => (setBulkMove(false), moveAssets(selectedAssets, folder.id))}>
+                        <span className="truncate">{path}</span>
                       </button>
                     ))}
                   {folders.length === 0 && folderId === null && <p className="px-4 py-2 text-xs text-zinc-500">Todavía no hay carpetas.</p>}
@@ -633,6 +737,16 @@ export default function MediaPage() {
                 {visibleFolders.map((f) => (
                   <tr
                     key={`f-${f.id}`}
+                    draggable
+                    onDragStart={(e) => {
+                      dragFolder.current = f.id;
+                      e.dataTransfer.setData(FOLDER_DRAG, f.id);
+                      e.dataTransfer.effectAllowed = "move";
+                    }}
+                    onDragEnd={() => {
+                      dragFolder.current = null;
+                      setDropFolder(null);
+                    }}
                     className={`row-click ${menu?.key === `f:${f.id}` ? "bg-white/[0.05]" : ""} ${dropFolder === f.id ? "!bg-accent/20 outline outline-2 -outline-offset-2 outline-accent" : ""}`}
                     onClick={() => openFolder(f.id)}
                     {...folderDropProps(f.id)}
@@ -767,15 +881,17 @@ export default function MediaPage() {
                   ← Mover a…
                 </button>
                 <div className="my-1 border-t border-line" />
-                <button className={menuItem} disabled={menuAsset.folderId === null} onClick={() => (setMenu(null), moveAssets([menuAsset], null))}>
-                  Mi biblioteca
-                </button>
-                {folders.map((f) => (
-                  <button key={f.id} className={menuItem} disabled={menuAsset.folderId === f.id} onClick={() => (setMenu(null), moveAssets([menuAsset], f.id))}>
-                    <span className="truncate">{f.name}</span>
+                <div className="max-h-64 overflow-auto">
+                  <button className={menuItem} disabled={menuAsset.folderId === null} onClick={() => (setMenu(null), moveAssets([menuAsset], null))}>
+                    Mi biblioteca
                   </button>
-                ))}
-                {folders.length === 0 && <p className="px-4 py-2 text-xs text-zinc-500">Todavía no hay carpetas.</p>}
+                  {folderOptions.map(({ folder, path }) => (
+                    <button key={folder.id} className={menuItem} title={path} disabled={menuAsset.folderId === folder.id} onClick={() => (setMenu(null), moveAssets([menuAsset], folder.id))}>
+                      <span className="truncate">{path}</span>
+                    </button>
+                  ))}
+                  {folders.length === 0 && <p className="px-4 py-2 text-xs text-zinc-500">Todavía no hay carpetas.</p>}
+                </div>
               </>
             )}
 
@@ -783,6 +899,9 @@ export default function MediaPage() {
               <>
                 <button className={menuItem} onClick={() => openFolder(menuFolder.id)}>
                   Abrir
+                </button>
+                <button className={menuItem} onClick={() => setMenu({ ...menu, view: "move" })}>
+                  Mover a carpeta…
                 </button>
                 <button className={menuItem} onClick={() => setMenu({ ...menu, view: "color" })}>
                   Cambiar color…
@@ -793,6 +912,33 @@ export default function MediaPage() {
                 <button className={`${menuItem} text-red-400`} onClick={() => (setMenu(null), deleteFolder(menuFolder))}>
                   Eliminar
                 </button>
+              </>
+            )}
+
+            {menuFolder && menu.view === "move" && (
+              <>
+                <button className="px-4 py-2 text-left text-xs text-zinc-400 hover:text-zinc-100" onClick={() => setMenu({ ...menu, view: "main" })}>
+                  ← Mover a…
+                </button>
+                <div className="my-1 border-t border-line" />
+                <div className="max-h-64 overflow-auto">
+                  <button className={menuItem} disabled={!canDropFolder(menuFolder.id, null)} onClick={() => (setMenu(null), moveFolder(menuFolder, null))}>
+                    Mi biblioteca
+                  </button>
+                  {folderOptions
+                    .filter(({ folder }) => !isInside(folder.id, menuFolder.id))
+                    .map(({ folder, path }) => (
+                      <button
+                        key={folder.id}
+                        className={menuItem}
+                        title={path}
+                        disabled={!canDropFolder(menuFolder.id, folder.id)}
+                        onClick={() => (setMenu(null), moveFolder(menuFolder, folder.id))}
+                      >
+                        <span className="truncate">{path}</span>
+                      </button>
+                    ))}
+                </div>
               </>
             )}
 

@@ -15,7 +15,7 @@ const DEFAULT_STYLE: Style = { orientation: "landscape", transition: "cut" };
 
 async function presentationPlayItems(presentationId: string): Promise<{ items: PlayItem[]; style: Style }> {
   const [p] = await db
-    .select({ orientation: presentations.orientation, transition: presentations.transition })
+    .select({ orientation: presentations.orientation, transition: presentations.transition, defaultDurationSeconds: presentations.defaultDurationSeconds })
     .from(presentations)
     .where(eq(presentations.id, presentationId));
   const rows = await db
@@ -24,18 +24,20 @@ async function presentationPlayItems(presentationId: string): Promise<{ items: P
     .innerJoin(mediaAssets, eq(presentationItems.mediaAssetId, mediaAssets.id))
     .where(eq(presentationItems.presentationId, presentationId))
     .orderBy(asc(presentationItems.position));
+  const imageSeconds = p?.defaultDurationSeconds ?? DEFAULT_IMAGE_SECONDS;
   const items = rows.map(({ item, asset }) => ({
     id: item.id,
     url: publicUrl(asset.objectKey),
     kind: asset.kind,
-    durationSeconds: item.durationSeconds ?? (asset.kind === "image" ? DEFAULT_IMAGE_SECONDS : null),
+    durationSeconds: item.durationSeconds ?? (asset.kind === "image" ? imageSeconds : null),
     fit: item.fit === "cover" ? ("cover" as const) : ("contain" as const),
     transition: item.transition,
     rotation: item.rotation,
     flipH: item.flipH,
     flipV: item.flipV,
+    sound: item.sound,
   }));
-  return { items, style: p ?? DEFAULT_STYLE };
+  return { items, style: p ? { orientation: p.orientation, transition: p.transition } : DEFAULT_STYLE };
 }
 
 async function presentationName(id: string) {
@@ -93,7 +95,7 @@ async function resolveContent(deviceId: string, now: Date, timeZone: string): Pr
       return {
         source: "takeover",
         label: asset.originalName,
-        items: [{ id: asset.id, url: publicUrl(asset.objectKey), kind: asset.kind, durationSeconds: null, fit: "contain", transition: null, rotation: 0, flipH: false, flipV: false }],
+        items: [{ id: asset.id, url: publicUrl(asset.objectKey), kind: asset.kind, durationSeconds: null, fit: "contain", transition: null, rotation: 0, flipH: false, flipV: false, sound: false }],
         style: { orientation: portrait ? "portrait" : "landscape", transition: "cut" },
       };
     }

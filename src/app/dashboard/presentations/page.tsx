@@ -10,7 +10,9 @@ import {
   type PresentationFolderDTO,
   type Transition,
 } from "@/lib/client";
+import { toast } from "sonner";
 import { IconClose, IconFolder, IconPlus, IconPresentations, IconSearch } from "@/components/Icons";
+import { useDialogs } from "@/components/Dialogs";
 
 type Fit = "contain" | "cover";
 type Rotation = 0 | 90 | 180 | 270;
@@ -25,12 +27,23 @@ type MediaRow = {
   rotation: Rotation;
   flipH: boolean;
   flipV: boolean;
+  /** Videos: con sonido. */
+  sound: boolean;
   asset: MediaDTO;
 };
 /** "collapsed" es solo de la interfaz: no se envía al servidor. */
 type SectionRow = { uid: number; type: "section"; name: string; collapsed: boolean };
 type Row = MediaRow | SectionRow;
-type Detail = { id: string; name: string; description: string | null; orientation: Orientation; transition: Transition; items: Row[] };
+type Detail = {
+  id: string;
+  name: string;
+  description: string | null;
+  orientation: Orientation;
+  transition: Transition;
+  /** Segundos por imagen cuando el elemento no tiene duración propia; null = DEFAULT_IMAGE_SECONDS. */
+  defaultDurationSeconds: number | null;
+  items: Row[];
+};
 
 type ApiItem =
   | {
@@ -42,12 +55,23 @@ type ApiItem =
       rotation?: number;
       flipH?: boolean;
       flipV?: boolean;
+      sound?: boolean;
       asset: MediaDTO;
     }
   | { type: "section"; name: string };
-type ApiDetail = { id: string; name: string; description: string | null; orientation: string; transition: string; items: ApiItem[] };
+type ApiDetail = {
+  id: string;
+  name: string;
+  description: string | null;
+  orientation: string;
+  transition: string;
+  defaultDurationSeconds?: number | null;
+  items: ApiItem[];
+};
 
 const ACCENT = "#2492ff";
+/** Igual que en src/lib/playback.ts. */
+const DEFAULT_IMAGE_SECONDS = 10;
 const ICEP_FADE_CSS =
   "@keyframes icep-fade{from{opacity:0}to{opacity:1}}.icep-fade{animation:icep-fade 700ms ease-in-out}@media (prefers-reduced-motion:reduce){.icep-fade{animation:none}}";
 
@@ -66,6 +90,7 @@ function hydrate(d: ApiDetail): Detail {
     description: d.description,
     orientation: d.orientation === "portrait" ? "portrait" : "landscape",
     transition: d.transition === "dissolve" ? "dissolve" : "cut",
+    defaultDurationSeconds: d.defaultDurationSeconds ?? null,
     items: d.items.map((it): Row =>
       it.type === "section"
         ? { uid: nextUid(), type: "section", name: it.name, collapsed: false }
@@ -79,6 +104,7 @@ function hydrate(d: ApiDetail): Detail {
             rotation: normRotation(it.rotation),
             flipH: !!it.flipH,
             flipV: !!it.flipV,
+            sound: !!it.sound,
             asset: it.asset,
           },
     ),
@@ -369,7 +395,7 @@ export default function PresentationsPage() {
   const [media, setMedia] = useState<MediaDTO[]>([]);
   const [mFolders, setMFolders] = useState<FolderDTO[]>([]);
   const [current, setCurrent] = useState<Detail | null>(null);
-  const [status, setStatus] = useState<string | null>(null);
+  const dialogs = useDialogs();
   const [listQuery, setListQuery] = useState("");
   const [listOpen, setListOpen] = useState(true);
   const [openFolders, setOpenFolders] = useState<Set<string>>(new Set());
@@ -465,7 +491,6 @@ export default function PresentationsPage() {
   }, [detailUid, newPres, addOpen, preview]);
 
   async function open(id: string) {
-    setStatus(null);
     setPicked([]);
     setPreview(null);
     setDetailUid(null);
@@ -502,8 +527,14 @@ export default function PresentationsPage() {
   }
 
   async function deleteFolder(f: PresentationFolderDTO) {
-    if (!confirm(`¿Borrar la carpeta "${f.name}"?`)) return;
-    await api(`/api/presentation-folders/${f.id}`, { method: "DELETE" });
+    const ok = await dialogs.confirm({ title: "Borrar carpeta", message: `¿Borrar la carpeta "${f.name}"?`, danger: true, confirmLabel: "Borrar" });
+    if (!ok) return;
+    try {
+      await api(`/api/presentation-folders/${f.id}`, { method: "DELETE" });
+      toast.success(`Carpeta "${f.name}" borrada`);
+    } catch (e) {
+      toast.error((e as Error).message);
+    }
     await loadList();
   }
 
@@ -570,6 +601,7 @@ export default function PresentationsPage() {
         rotation: 0,
         flipH: false,
         flipV: false,
+        sound: false,
         asset: m,
       }),
     );
@@ -596,8 +628,10 @@ export default function PresentationsPage() {
   async function uploadFiles(files: FileList | null) {
     if (!files || files.length === 0) return;
     setUploading(true);
+    const list = Array.from(files);
+    const id = toast.loading(list.length === 1 ? `Subiendo "${list[0].name}"…` : `Subiendo ${list.length} archivos…`);
     try {
-      for (const file of Array.from(files)) {
+      for (const file of list) {
         const res = await fetch("/api/media/upload", {
           method: "PUT",
           headers: { "content-type": file.type || "application/octet-stream", "x-file-name": encodeURIComponent(file.name) },
@@ -607,8 +641,9 @@ export default function PresentationsPage() {
         if (!res.ok) throw new Error(data.error ?? `Error ${res.status}`);
         setMedia((m) => [data, ...m]);
       }
+      toast.success(list.length === 1 ? `"${list[0].name}" subido` : `${list.length} archivos subidos`, { id });
     } catch (e) {
-      setStatus(e instanceof Error ? e.message : "No se pudo subir el archivo");
+      toast.error(e instanceof Error ? e.message : "No se pudo subir el archivo", { id });
     } finally {
       setUploading(false);
       if (fileInput.current) fileInput.current.value = "";
@@ -720,6 +755,17 @@ export default function PresentationsPage() {
 
   async function save() {
     if (!current) return;
+    try {
+      await saveCurrent(current);
+    } catch (e) {
+      toast.error((e as Error).message);
+      return;
+    }
+    toast.success("Guardado", { description: "Las pantallas que la usan ya se actualizaron." });
+    await loadList();
+  }
+
+  async function saveCurrent(current: Detail) {
     await api(`/api/presentations/${current.id}`, {
       method: "PUT",
       body: JSON.stringify({
@@ -727,6 +773,7 @@ export default function PresentationsPage() {
         description: current.description,
         orientation: current.orientation,
         transition: current.transition,
+        defaultDurationSeconds: current.defaultDurationSeconds,
         items: current.items.map((it) =>
           it.type === "section"
             ? { type: "section", name: it.name }
@@ -739,17 +786,24 @@ export default function PresentationsPage() {
                 rotation: it.rotation,
                 flipH: it.flipH,
                 flipV: it.flipV,
+                sound: it.sound,
               },
         ),
       }),
     });
-    setStatus("Guardado. Las pantallas que la usan ya se actualizaron.");
-    await loadList();
   }
 
   async function remove() {
-    if (!current || !confirm(`¿Borrar "${current.name}"?`)) return;
-    await api(`/api/presentations/${current.id}`, { method: "DELETE" });
+    if (!current) return;
+    const ok = await dialogs.confirm({ title: "Borrar presentación", message: `¿Borrar "${current.name}"? No se puede deshacer.`, danger: true, confirmLabel: "Borrar" });
+    if (!ok) return;
+    try {
+      await api(`/api/presentations/${current.id}`, { method: "DELETE" });
+    } catch (e) {
+      toast.error((e as Error).message);
+      return;
+    }
+    toast.success(`"${current.name}" borrada`);
     setCurrent(null);
     setDetailUid(null);
     await loadList();
@@ -757,16 +811,20 @@ export default function PresentationsPage() {
 
   async function takeover() {
     if (!current) return;
-    await api("/api/takeover", { method: "POST", body: JSON.stringify({ presentationId: current.id, deviceId: null }) });
-    setStatus("En el aire en todas las pantallas.");
+    try {
+      await api("/api/takeover", { method: "POST", body: JSON.stringify({ presentationId: current.id, deviceId: null }) });
+      toast.success("En el aire en todas las pantallas");
+    } catch (e) {
+      toast.error((e as Error).message);
+    }
   }
 
   async function copyLink() {
     try {
       await navigator.clipboard.writeText(window.location.href);
-      setStatus("Enlace copiado.");
+      toast.success("Enlace copiado");
     } catch {
-      setStatus("No se pudo copiar el enlace.");
+      toast.error("No se pudo copiar el enlace");
     }
   }
 
@@ -782,7 +840,7 @@ export default function PresentationsPage() {
     .sort((a, b) =>
       mSort === "name" ? a.originalName.localeCompare(b.originalName) : mSort === "oldest" ? a.uploadedAt.localeCompare(b.uploadedAt) : b.uploadedAt.localeCompare(a.uploadedAt),
     );
-  const shownFolders = mq || mFolderId ? [] : mFolders;
+  const shownFolders = mq ? [] : mFolders.filter((f) => f.parentId === mFolderId);
   const currentMFolder = mFolders.find((f) => f.id === mFolderId);
   const sideOpen = addOpen || (current !== null && detail !== null);
 
@@ -1092,10 +1150,47 @@ export default function PresentationsPage() {
 
               {/* Barra de opciones de la presentación (se guardan con "Guardar") */}
               <div className="flex flex-wrap items-center gap-3 py-5 text-sm">
-                <button type="button" disabled className="flex items-center gap-2 rounded-lg border border-line bg-panel px-4 py-2.5 text-zinc-300 opacity-90" title="Se configura por elemento">
-                  <IconTimer />
-                  Ninguno
-                </button>
+                <Pop
+                  width="w-64"
+                  trigger={({ toggle }) => (
+                    <button
+                      type="button"
+                      onClick={toggle}
+                      className="flex items-center gap-2 rounded-lg border border-line bg-panel px-4 py-2.5 hover:bg-raised"
+                      aria-label="Avance automático"
+                      title="Cuánto dura cada imagen que no tiene una duración propia"
+                    >
+                      <IconTimer />
+                      Cada {current.defaultDurationSeconds ?? DEFAULT_IMAGE_SECONDS} s
+                    </button>
+                  )}
+                >
+                  {(close) => (
+                    <div className="space-y-2 p-3">
+                      <label className="block space-y-1 text-xs text-zinc-400">
+                        Segundos por imagen
+                        <input
+                          className="input w-full"
+                          type="number"
+                          min={1}
+                          placeholder={String(DEFAULT_IMAGE_SECONDS)}
+                          value={current.defaultDurationSeconds ?? ""}
+                          onChange={(e) => patchCurrent({ defaultDurationSeconds: e.target.value ? Math.max(1, Number(e.target.value)) : null })}
+                        />
+                      </label>
+                      <p className="text-xs text-zinc-500">Los videos se reproducen completos. Cada elemento puede tener su propia duración.</p>
+                      <button
+                        className="btn w-full"
+                        onClick={() => {
+                          patchCurrent({ defaultDurationSeconds: null });
+                          close();
+                        }}
+                      >
+                        Predeterminado ({DEFAULT_IMAGE_SECONDS} s)
+                      </button>
+                    </div>
+                  )}
+                </Pop>
                 <Pop
                   trigger={({ toggle }) => (
                     <button type="button" onClick={toggle} className="flex items-center gap-2 rounded-lg border border-line bg-panel px-4 py-2.5 hover:bg-raised" aria-label="Transición">
@@ -1138,7 +1233,6 @@ export default function PresentationsPage() {
                   Agregar sección
                 </button>
               </div>
-              {status && <p className="pb-3 text-sm text-zinc-400">{status}</p>}
 
               <div ref={shellRef} className="overflow-hidden rounded-xl border border-line bg-panel" onDragOver={onExtOver} onDragLeave={onExtLeave} onDrop={onExtDrop}>
                 <div className="overflow-x-auto">
@@ -1222,7 +1316,8 @@ export default function PresentationsPage() {
                         }
 
                         const a = it.asset;
-                        const dur = it.durationSeconds ?? (a.kind === "video" ? a.durationSeconds : null);
+                        const dur = it.durationSeconds ?? (a.kind === "video" ? a.durationSeconds : (current.defaultDurationSeconds ?? DEFAULT_IMAGE_SECONDS));
+                        const tr = it.transition ?? current.transition;
                         return (
                           <tr
                             key={it.uid}
@@ -1259,13 +1354,14 @@ export default function PresentationsPage() {
                               {a.mimeType.split("/")[1] ?? a.kind}
                             </td>
                             <td style={cellStyle} className="px-4">
-                              <div className="flex items-center gap-3 text-xs text-zinc-600">
-                                <span className="flex items-center gap-1.5">
+                              <div className="flex items-center gap-3 text-xs text-zinc-500">
+                                <span className="flex items-center gap-1.5" title={it.durationSeconds ? "Duración propia" : "Duración de la presentación"}>
                                   <IconTimer />
-                                  Ninguno
+                                  {it.durationSeconds ? `${it.durationSeconds} s` : a.kind === "video" ? "Al terminar" : "Predet."}
                                 </span>
-                                <span className="text-zinc-600">
-                                  <IconCut />
+                                <span className="flex items-center gap-1.5" title={it.transition ? "Transición propia" : "Transición de la presentación"}>
+                                  {tr === "dissolve" ? <IconDissolve /> : <IconCut />}
+                                  {it.transition ? (tr === "dissolve" ? "Disolver" : "Corte") : ""}
                                 </span>
                               </div>
                             </td>
@@ -1306,7 +1402,7 @@ export default function PresentationsPage() {
         <aside className="drawer flex !max-w-[26rem] flex-col !p-0" role="dialog" aria-label="Agregar medios">
           <div className="relative flex items-center justify-center gap-2 px-5 py-4">
             {currentMFolder && (
-              <button className="absolute left-4 flex items-center gap-1 text-sm text-accent" onClick={() => setMFolderId(null)}>
+              <button className="absolute left-4 flex items-center gap-1 text-sm text-accent" onClick={() => setMFolderId(currentMFolder.parentId)}>
                 <IconChevronLeft size={16} />
                 Atrás
               </button>
@@ -1427,7 +1523,11 @@ export default function PresentationsPage() {
                   trigger={({ toggle }) => (
                     <button className="btn" onClick={toggle}>
                       <IconTimer />
-                      {detail.durationSeconds ? `${detail.durationSeconds} s` : "Predeterminado"}
+                      {detail.durationSeconds
+                        ? `${detail.durationSeconds} s`
+                        : detail.asset.kind === "image"
+                          ? `Predeterminado (${current.defaultDurationSeconds ?? DEFAULT_IMAGE_SECONDS} s)`
+                          : "Predeterminado"}
                     </button>
                   )}
                 >
@@ -1439,7 +1539,13 @@ export default function PresentationsPage() {
                           className="input w-full"
                           type="number"
                           min={1}
-                          placeholder={detail.asset.kind === "video" ? (detail.asset.durationSeconds != null ? String(detail.asset.durationSeconds) : "auto") : "10"}
+                          placeholder={
+                            detail.asset.kind === "video"
+                              ? detail.asset.durationSeconds != null
+                                ? String(detail.asset.durationSeconds)
+                                : "auto"
+                              : String(current.defaultDurationSeconds ?? DEFAULT_IMAGE_SECONDS)
+                          }
                           value={detail.durationSeconds ?? ""}
                           onChange={(e) => setDuration(detail.uid, e.target.value)}
                         />
@@ -1506,6 +1612,12 @@ export default function PresentationsPage() {
                   <option value="270">270°</option>
                 </select>
               </label>
+              {detail.asset.kind === "video" && (
+                <div className="flex items-center justify-between gap-3">
+                  <span title="Algunas pantallas no permiten audio automático; ahí el video se reproduce sin sonido">Sonido</span>
+                  <Toggle checked={detail.sound} onChange={(v) => patchMedia(detail.uid, { sound: v })} label="Sonido" />
+                </div>
+              )}
               <div className="flex items-center justify-between gap-3">
                 <span>Espejo horizontal</span>
                 <Toggle checked={detail.flipH} onChange={(v) => patchMedia(detail.uid, { flipH: v })} label="Espejo horizontal" />

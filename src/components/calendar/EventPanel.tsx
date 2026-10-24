@@ -23,6 +23,8 @@ export type EventForm = {
   groupId: string;
   deviceIds: string[];
   enabled: boolean;
+  /** Evento generado desde una reunión de Notion: solo lectura. */
+  fromNotion: boolean;
 };
 
 const FREQS = [
@@ -42,8 +44,6 @@ export function EventPanel({
   presentations,
   devices,
   groups,
-  msg,
-  msgError,
   saving,
   onSave,
   onDelete,
@@ -56,8 +56,6 @@ export function EventPanel({
   presentations: PresentationDTO[];
   devices: DeviceDTO[];
   groups: GroupDTO[];
-  msg: string | null;
-  msgError: boolean;
   saving: boolean;
   onSave: () => void;
   onDelete: () => void;
@@ -111,12 +109,21 @@ export function EventPanel({
       className="flex h-full flex-col"
     >
       <div className="flex items-center justify-between px-5 pt-4">
-        <h2 className="font-semibold">{form.id ? "Editar evento" : "Nuevo evento"}</h2>
+        <h2 className="font-semibold">{form.fromNotion ? "Reunión de Notion" : form.id ? "Editar evento" : "Nuevo evento"}</h2>
         <button type="button" onClick={onClose} aria-label="Cerrar" className="text-zinc-400 hover:text-zinc-100">
           <IconX />
         </button>
       </div>
-      <div className="min-h-0 flex-1 space-y-5 overflow-auto p-5">
+      <fieldset disabled={form.fromNotion} className="min-h-0 flex-1 space-y-5 overflow-auto p-5">
+        {form.fromNotion && (
+          <p className="rounded-lg border border-accent/40 bg-accent/10 p-3 text-xs leading-relaxed text-zinc-300">
+            Este evento sale de Notion y se actualiza solo. El día y la hora se cambian en Notion; cuánto antes empieza, cuánto después termina y la presentación, en{" "}
+            <a href="/dashboard/settings?tab=meetings" className="text-accent underline">
+              Ajustes &gt; Reuniones
+            </a>
+            .
+          </p>
+        )}
         <label className="block space-y-2 text-sm">
           <span className="font-semibold">Nombre del evento</span>
           <input
@@ -318,13 +325,8 @@ export function EventPanel({
           Activo
         </label>
 
-        {msg && (
-          <p role={msgError ? "alert" : "status"} className={`text-sm ${msgError ? "text-red-400" : "text-zinc-400"}`}>
-            {msg}
-          </p>
-        )}
-      </div>
-      <div className="flex gap-2 border-t border-line p-4">
+      </fieldset>
+      {!form.fromNotion && <div className="flex gap-2 border-t border-line p-4">
         <button className="btn-primary flex-1" disabled={!canSave || saving}>
           Guardar
         </button>
@@ -333,7 +335,7 @@ export function EventPanel({
             Eliminar
           </button>
         )}
-      </div>
+      </div>}
     </form>
   );
 }

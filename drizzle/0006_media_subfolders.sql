@@ -1,0 +1,2 @@
+ALTER TABLE "media_folders" ADD COLUMN "parent_id" uuid;--> statement-breakpoint
+ALTER TABLE "media_folders" ADD CONSTRAINT "media_folders_parent_id_media_folders_id_fk" FOREIGN KEY ("parent_id") REFERENCES "public"."media_folders"("id") ON DELETE set null ON UPDATE no action;

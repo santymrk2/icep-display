@@ -12,6 +12,8 @@ docker compose up -d --build
 
 - Panel: `http://IP-DEL-SERVIDOR:3000/dashboard`
 - Reproductor (lo que abre cada TV en MSX): `http://IP-DEL-SERVIDOR:3000/player`
+- En Media Station X: Settings → Start Parameter → Setup, escribir solo `IP-DEL-SERVIDOR:3000` (sin `/`). MSX pide `/msx/start.json` y desde ahí abre el reproductor.
+- Si MSX corre en modo seguro (por ejemplo en Titan OS) no puede leer el servidor por HTTP y da "status 0". En ese caso se usa el archivo de inicio publicado en GitHub (`msx/start.json` de este repo, por HTTPS) con un link corto: en Start Parameter se escribe `id:igd:ALIAS`. La IP del servidor está fija en `msx/content.json`; si cambia, hay que editarla ahí.
 
 Las migraciones y el bucket de MinIO se crean solos al arrancar.
 
@@ -44,6 +46,19 @@ Si cambiás `src/db/schema.ts`: `npm run db:generate` y se aplica al reiniciar.
 - Los días se guardan como bitmask (bit 0 = domingo ... bit 6 = sábado) y las horas como `HH:MM:SS` en la zona horaria del servidor (`TZ`).
 - Los bloques desactivados se ven atenuados y no se reproducen. Si varios bloques se superponen, gana el de mayor `priority` (por ahora siempre 0, así que se usa el orden de la base).
 - API: `/api/schedules` (GET, POST) y `/api/schedules/[id]` (PATCH, DELETE). Cada cambio vuelve a calcular lo que muestra cada pantalla.
+
+## Reuniones desde Notion
+
+Las reuniones de la base de Notion de la iglesia se pasan solas al calendario (`src/lib/notion.ts`).
+
+1. En el `.env` del servidor completar `NOTION_TOKEN` y `NOTION_DATABASE_ID` con los mismos valores que usa la página web de la iglesia (`NOTION_API_KEY` y `DATABASE_ID` de icep-website; el link de la base también sirve) y reiniciar: `docker compose up -d`.
+2. En **Ajustes → Reuniones** están los tipos de reunión (vienen cargados los de la web y los nuevos de Notion aparecen solos). Para cada uno se elige la presentación, la hora habitual (para reuniones que en Notion tienen solo fecha), cuántos minutos antes empieza a mostrarse y cuántos minutos después del inicio termina. Sin presentación no se crean eventos de ese tipo.
+
+- El servidor consulta Notion cada `NOTION_SYNC_MINUTES` (10 por defecto) y trae las reuniones desde ayer hasta `NOTION_DAYS_AHEAD` días (60). También hay un botón "Sincronizar ahora".
+- Cada reunión es un evento único en el calendario del tipo (o el primero), para todas sus pantallas. Si en Notion cambia el horario o el tipo, el evento se actualiza; si se borra, se borra.
+- Los eventos de Notion no se editan desde el calendario (se pisarían en la próxima sincronización).
+- Se leen las propiedades `Fecha` y `Tipo de Reunión`, igual que la web (se cambian con `NOTION_DATE_PROPERTY` y `NOTION_TYPE_PROPERTY`). Si una reunión tiene solo fecha se usa la hora habitual del tipo; si el tipo no tiene, la reunión se lista en Ajustes y no se crea el evento.
+- Si con los minutos el horario pasa la medianoche, se corta en 00:00 / 23:59.
 
 ## Compatibilidad con TVs
 
