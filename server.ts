@@ -12,6 +12,7 @@ import { BUCKET, ensureBucket, minioHost, minioPort } from "@/lib/storage";
 import { cookieValue, ensureAdmin, operatorMayCall, userFromToken } from "@/lib/auth";
 import { attachDevice, createPairingCode, rememberScreen, refreshAll, refreshDevice, send } from "@/lib/hub";
 import { startNotionSync } from "@/lib/notion";
+import { resumeTranscodes } from "@/lib/transcode";
 import type { ClientMessage } from "@/lib/protocol";
 
 const dev = process.env.NODE_ENV !== "production";
@@ -170,6 +171,7 @@ async function main() {
     }
   }
   await ensureAdmin();
+  await resumeTranscodes();
   await app.prepare();
 
   const server = createServer((req, res) => {

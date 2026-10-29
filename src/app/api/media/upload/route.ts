@@ -5,12 +5,14 @@ import { db } from "@/db";
 import { mediaAssets } from "@/db/schema";
 import { error, json } from "@/lib/http";
 import { BUCKET, minio, publicUrl } from "@/lib/storage";
+import { enqueueTranscode } from "@/lib/transcode";
 
 /**
  * Subida en streaming: el navegador hace PUT con el archivo como cuerpo crudo,
  * así un video 4K no se carga entero en memoria.
  * Headers: content-type, content-length, x-file-name (URI-encoded), x-duration-seconds (opcional, solo video),
  * x-width / x-height (opcionales, píxeles).
+ * Los videos quedan con processing = true hasta que termina la conversión (lib/transcode.ts).
  */
 export async function PUT(req: Request) {
   const mimeType = req.headers.get("content-type") ?? "";
@@ -44,7 +46,9 @@ export async function PUT(req: Request) {
 
   const [asset] = await db
     .insert(mediaAssets)
-    .values({ originalName, objectKey, mimeType, kind, sizeBytes: size, durationSeconds, width, height })
+    .values({ originalName, objectKey, mimeType, kind, sizeBytes: size, durationSeconds, width, height, processing: kind === "video" })
     .returning();
+  // Los videos se convierten en segundo plano a un formato que reproduzca cualquier TV.
+  if (kind === "video") enqueueTranscode(asset.id);
   return json({ ...asset, url: publicUrl(asset.objectKey), thumbnailUrl: asset.thumbnailKey ? publicUrl(asset.thumbnailKey) : null }, 201);
 }

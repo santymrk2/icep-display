@@ -49,6 +49,8 @@ export const mediaAssets = pgTable("media_assets", {
   /** Resolución en píxeles, medida en el navegador al subir. */
   width: integer("width"),
   height: integer("height"),
+  /** Video en conversión a un formato que reproduzca cualquier TV (ver lib/transcode.ts). Mientras tanto no se envía a las pantallas. */
+  processing: boolean("processing").notNull().default(false),
   folderId: uuid("folder_id").references(() => mediaFolders.id, { onDelete: "set null" }),
   uploadedAt: timestamp("uploaded_at", { withTimezone: true }).notNull().defaultNow(),
 });

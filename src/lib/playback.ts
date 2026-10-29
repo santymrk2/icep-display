@@ -22,7 +22,8 @@ async function presentationPlayItems(presentationId: string): Promise<{ items: P
     .select({ item: presentationItems, asset: mediaAssets })
     .from(presentationItems)
     .innerJoin(mediaAssets, eq(presentationItems.mediaAssetId, mediaAssets.id))
-    .where(eq(presentationItems.presentationId, presentationId))
+    // Los videos que se están convirtiendo todavía no se mandan: el original puede no reproducirse en el TV.
+    .where(and(eq(presentationItems.presentationId, presentationId), eq(mediaAssets.processing, false)))
     .orderBy(asc(presentationItems.position));
   const imageSeconds = p?.defaultDurationSeconds ?? DEFAULT_IMAGE_SECONDS;
   const items = rows.map(({ item, asset }) => ({
@@ -90,7 +91,7 @@ async function resolveContent(deviceId: string, now: Date, timeZone: string): Pr
 
   if (takeover?.mediaAssetId) {
     const [asset] = await db.select().from(mediaAssets).where(eq(mediaAssets.id, takeover.mediaAssetId));
-    if (asset) {
+    if (asset && !asset.processing) {
       const portrait = asset.width && asset.height && asset.height > asset.width;
       return {
         source: "takeover",

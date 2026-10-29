@@ -239,6 +239,14 @@ export default function MediaPage() {
     void api<DeviceDTO[]>("/api/devices").then(setDevices).catch(() => {});
   }, [load]);
 
+  // Mientras haya videos convirtiéndose para TV se refresca la lista hasta que terminen.
+  const anyProcessing = media.some((m) => m.processing);
+  useEffect(() => {
+    if (!anyProcessing) return;
+    const t = setInterval(() => void load().catch(() => {}), 5000);
+    return () => clearInterval(t);
+  }, [anyProcessing, load]);
+
   /** Ejecuta una acción mostrando el resultado o el error en el aviso superior. */
   async function run(fn: () => Promise<string | void>) {
     try {
@@ -813,7 +821,7 @@ export default function MediaPage() {
                       <td className="max-w-xs truncate" title={m.originalName}>
                         {m.originalName}
                       </td>
-                      <td className="text-zinc-300">{typeLabel(m)}</td>
+                      <td className="text-zinc-300">{m.processing ? <span className="text-amber-400" title="Se está adaptando para que lo reproduzca cualquier TV">Convirtiendo…</span> : typeLabel(m)}</td>
                       <td className="whitespace-nowrap text-zinc-300">{fmtDate(m.uploadedAt)}</td>
                       <td className="text-right">
                         <button
@@ -980,7 +988,7 @@ function InspectDrawer({ media: m, onClose }: { media: MediaDTO; onClose: () => 
   const rows: [string, string][] = [
     ["Tipo", kindLabel(m)],
     ["Duración", m.kind === "video" && m.durationSeconds != null ? fmtDuration(m.durationSeconds) : "—"],
-    ["Formato", (m.mimeType.split("/")[1] ?? m.mimeType).toUpperCase()],
+    ["Formato", m.processing ? "Convirtiendo para TV…" : (m.mimeType.split("/")[1] ?? m.mimeType).toUpperCase()],
     ["Tamaño", formatBytes(m.sizeBytes)],
     ["Resolución", fmtResolution(m)],
     ["FPS", "—"],

@@ -22,6 +22,7 @@ export type MediaDTO = {
   sizeBytes: number;
   width: number | null;
   height: number | null;
+  processing: boolean;
   folderId: string | null;
   uploadedAt: string;
 };

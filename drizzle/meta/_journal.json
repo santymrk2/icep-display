@@ -71,6 +71,13 @@
       "when": 1792105694868,
       "tag": "0009_meeting_default_time",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1793274883742,
+      "tag": "0010_video_transcode",
+      "breakpoints": true
     }
   ]
 }
