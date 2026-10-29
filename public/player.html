@@ -113,6 +113,35 @@
   window.addEventListener('orientationchange', function () { setTimeout(function () { applyLayout(); reportScreen(); }, 300); });
   applyLayout();
 
+  /* ---------- Diagnóstico (/player?debug=1): muestra en pantalla qué pasa con los videos ---------- */
+  var DEBUG = /[?&]debug=1/.test(location.search);
+  var debugBox = null;
+  function debug(text) {
+    if (!DEBUG) return;
+    if (!debugBox) {
+      debugBox = document.createElement('div');
+      debugBox.style.cssText = 'position:absolute;left:0;top:0;width:60%;max-height:100%;overflow:hidden;background:rgba(0,0,0,0.75);color:#0f0;font:14px monospace;padding:6px;z-index:10;white-space:pre-wrap;';
+      document.body.appendChild(debugBox);
+      debug(navigator.userAgent);
+      var probe = document.createElement('video');
+      var types = ['video/mp4; codecs="avc1.42E01E"', 'video/mp4; codecs="avc1.640028"', 'video/mp4; codecs="avc1.640033"', 'video/mp4; codecs="hvc1"', 'video/webm; codecs="vp9"', 'video/quicktime'];
+      for (var i = 0; i < types.length; i++) debug('canPlayType ' + types[i] + ' -> "' + probe.canPlayType(types[i]) + '"');
+    }
+    var line = document.createElement('div');
+    line.textContent = new Date().toTimeString().slice(0, 8) + ' ' + text;
+    debugBox.appendChild(line);
+    while (debugBox.childNodes.length > 40) debugBox.removeChild(debugBox.firstChild);
+  }
+  function watchEvents(v, item) {
+    debug('video ' + item.url + ' sonido=' + !!item.sound);
+    var evs = ['loadstart', 'loadedmetadata', 'canplay', 'playing', 'pause', 'waiting', 'stalled', 'ended', 'abort', 'emptied'];
+    for (var i = 0; i < evs.length; i++) (function (name) {
+      v.addEventListener(name, function () {
+        debug(name + ' ready=' + v.readyState + ' net=' + v.networkState + ' t=' + (v.currentTime || 0).toFixed(1) + ' ' + v.videoWidth + 'x' + v.videoHeight + ' muted=' + v.muted);
+      });
+    })(evs[i]);
+  }
+
   /* ---------- Reproducción ---------- */
   var playlist = [];
   var index = 0;
@@ -211,7 +240,12 @@
       // Con duración propia el video se repite hasta cumplirla; si no, se ve una vez entero.
       el.loop = single || !!item.durationSeconds;
       el.onended = next;
-      el.onerror = function () { currentTimer = setTimeout(next, 2000); };
+      el.onerror = function () {
+        var me = el.error;
+        debug('ERROR video code=' + (me ? me.code : '?') + ' ' + (me && me.message ? me.message : '') + ' (1=abortado 2=red 3=decodificación 4=formato no soportado)');
+        currentTimer = setTimeout(next, 2000);
+      };
+      if (DEBUG) watchEvents(el, item);
       el.src = item.url;
     }
 
@@ -234,7 +268,7 @@
     // Si es video, forzar inicio de carga y reproducción una vez en el DOM
     if (item.kind !== 'image') {
       var started = false;
-      function startVideo() {
+      var startVideo = function () {
         if (started || gen !== generation || el !== currentEl) return;
         var p = null;
         try { p = el.play(); } catch (e) {
@@ -253,7 +287,7 @@
           });
         }
         if (!el.paused) started = true;
-      }
+      };
 
       // En Smart TVs el hardware decodificador necesita recibir metadata antes de poder reproducir
       el.addEventListener('canplay', startVideo);
@@ -291,6 +325,9 @@
     var iv = setInterval(function () {
       if (gen !== generation || video !== currentEl) { clearInterval(iv); return; }
       if (video.paused) {
+        // Navegadores de TV viejos rechazan el autoplay con sonido sin lanzar error ni devolver promesa:
+        // si sigue en pausa, se silencia antes de reintentar.
+        if (!video.muted) { video.muted = true; video.defaultMuted = true; video.setAttribute('muted', ''); debug('watch: en pausa, se silencia'); }
         try {
           var p = video.play();
           if (p && p.catch) p.catch(function () {
